@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-노트랑 완전 자동화 - 연구 → 슬라이드 생성 → 다운로드 → PPTX 변환
+노트랑 완전 자동화 v2 - 멀티 에이전트 시스템 통합
+- 연구 → 슬라이드 생성 → 다운로드 → PPTX 변환
+- 타임아웃 시 헬퍼 에이전트 투입
+- 버그 발생 시 복구 에이전트 투입
 """
 import json
 import subprocess
 import sys
 import asyncio
+import os
 from pathlib import Path
 from datetime import datetime
 import time
@@ -14,10 +18,17 @@ import time
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
 
+# 경로 설정
+SCRIPT_DIR = Path(__file__).parent
+sys.path.insert(0, str(SCRIPT_DIR / "noterang"))
+
+from noterang.agent_manager import get_noterang_agent, AgentTask, AgentStatus
+
 # 설정
 NLM_EXE = Path.home() / "AppData/Roaming/Python/Python313/Scripts/nlm.exe"
 DOWNLOAD_DIR = Path("D:/Entertainments/DevEnvironment/notebooklm")
 AUTH_DIR = Path.home() / ".notebooklm-mcp-cli"
+
 
 def sync_auth():
     """인증 동기화"""
@@ -55,23 +66,21 @@ def sync_auth():
 
     return True
 
+
 def run_nlm(args, timeout=120):
     """nlm CLI 실행"""
-    import os
     cmd = [str(NLM_EXE)] + args
     env = os.environ.copy()
     env['PYTHONIOENCODING'] = 'utf-8'
 
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, timeout=timeout,
-            env=env
-        )
+        result = subprocess.run(cmd, capture_output=True, timeout=timeout, env=env)
         stdout = result.stdout.decode('utf-8', errors='replace') if result.stdout else ''
         stderr = result.stderr.decode('utf-8', errors='replace') if result.stderr else ''
         return result.returncode == 0, stdout, stderr
     except Exception as e:
         return False, '', str(e)
+
 
 def check_auth():
     """인증 확인"""
@@ -79,111 +88,6 @@ def check_auth():
     success, stdout, _ = run_nlm(["login", "--check"])
     return success and stdout and "valid" in stdout.lower()
 
-def create_notebook(title):
-    """노트북 생성"""
-    success, stdout, stderr = run_nlm(["notebook", "create", title])
-    if success:
-        try:
-            data = json.loads(stdout)
-            return data.get('id')
-        except:
-            pass
-    # 에러 메시지에서 ID 추출 시도
-    return None
-
-def research_and_import(notebook_id, query, mode="fast"):
-    """연구 실행 및 소스 가져오기"""
-    print(f"  검색: {query}")
-
-    # 연구 시작
-    success, stdout, _ = run_nlm([
-        "research", "start", query,
-        "--notebook-id", notebook_id,
-        "--mode", mode
-    ])
-
-    if not success:
-        return False, 0
-
-    # Task ID 추출
-    task_id = None
-    for line in stdout.split('\n'):
-        if 'Task ID:' in line:
-            task_id = line.split('Task ID:')[1].strip()
-            break
-
-    if not task_id:
-        return False, 0
-
-    # 완료 대기
-    print(f"  대기 중...", end="", flush=True)
-    for i in range(24):  # 최대 2분
-        time.sleep(5)
-        success, stdout, _ = run_nlm(["research", "status", notebook_id])
-        if "completed" in stdout.lower():
-            print(" 완료!")
-            break
-        print(".", end="", flush=True)
-
-    # 소스 가져오기
-    success, stdout, _ = run_nlm(["research", "import", notebook_id, task_id])
-
-    # 가져온 소스 수 추출
-    imported = 0
-    if "Imported" in stdout:
-        try:
-            imported = int(stdout.split("Imported")[1].split("source")[0].strip())
-        except:
-            pass
-
-    return True, imported
-
-def create_slides(notebook_id, language="ko", focus=None):
-    """슬라이드 생성"""
-    args = ["slides", "create", notebook_id, "--language", language, "--confirm"]
-    if focus:
-        args.extend(["--focus", focus])
-
-    success, stdout, _ = run_nlm(args, timeout=60)
-
-    if not success:
-        return None
-
-    # Artifact ID 추출
-    artifact_id = None
-    for line in stdout.split('\n'):
-        if 'Artifact ID:' in line:
-            artifact_id = line.split('Artifact ID:')[1].strip()
-            break
-
-    return artifact_id
-
-def wait_for_slides(notebook_id, timeout=300):
-    """슬라이드 생성 완료 대기"""
-    print(f"  생성 중...", end="", flush=True)
-    start = time.time()
-
-    while time.time() - start < timeout:
-        time.sleep(10)
-        success, stdout, _ = run_nlm(["studio", "status", notebook_id])
-
-        if '"status": "completed"' in stdout:
-            print(" 완료!")
-            # Artifact ID 추출
-            try:
-                data = json.loads(stdout)
-                for item in data:
-                    if item.get('type') == 'slide_deck' and item.get('status') == 'completed':
-                        return item.get('id')
-            except:
-                pass
-            return True
-
-        elapsed = int(time.time() - start)
-        print(f"\r  생성 중... {elapsed}초", end="", flush=True)
-
-    print(" 타임아웃")
-    return None
 
 async def download_via_browser(notebook_id, output_dir):
     """브라우저를 통한 다운로드 (CLI 버그 우회)"""
@@ -191,7 +95,6 @@ async def download_via_browser(notebook_id, output_dir):
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-
     user_data_dir = AUTH_DIR / "browser_profile"
 
     async with async_playwright() as p:
@@ -205,8 +108,8 @@ async def download_via_browser(notebook_id, output_dir):
         )
 
         page = context.pages[0] if context.pages else await context.new_page()
-
         notebook_url = f"https://notebooklm.google.com/notebook/{notebook_id}"
+
         try:
             await page.goto(notebook_url, wait_until='domcontentloaded', timeout=30000)
         except:
@@ -214,7 +117,6 @@ async def download_via_browser(notebook_id, output_dir):
 
         await asyncio.sleep(8)
 
-        # 메뉴를 통한 다운로드
         downloaded_path = None
         menu_btns = await page.query_selector_all('[aria-haspopup="menu"], button[aria-label*="more"]')
 
@@ -238,8 +140,8 @@ async def download_via_browser(notebook_id, output_dir):
 
         await asyncio.sleep(2)
         await context.close()
-
         return downloaded_path
+
 
 def pdf_to_pptx(pdf_path):
     """PDF를 PPTX로 변환"""
@@ -272,13 +174,15 @@ def pdf_to_pptx(pdf_path):
 
     doc.close()
     prs.save(output_path)
-
     return output_path, len(prs.slides)
 
-def run_full_automation(title, research_queries, focus=None, language="ko"):
-    """전체 자동화 실행"""
+
+async def run_full_automation_async(title, research_queries, focus=None, language="ko"):
+    """전체 자동화 실행 (멀티 에이전트 버전)"""
+    agent = get_noterang_agent()
+
     print("=" * 60)
-    print(f"노트랑 자동화: {title}")
+    print(f"노트랑 멀티 에이전트 자동화: {title}")
     print("=" * 60)
 
     # 1. 인증 확인
@@ -288,7 +192,7 @@ def run_full_automation(title, research_queries, focus=None, language="ko"):
         return None
     print("  ✓ 인증 유효")
 
-    # 2. 노트북 생성 또는 기존 사용
+    # 2. 노트북 확인/생성
     print(f"\n[2/6] 노트북 확인...")
     success, stdout, _ = run_nlm(["list", "notebooks"])
 
@@ -299,39 +203,47 @@ def run_full_automation(title, research_queries, focus=None, language="ko"):
             for nb in notebooks:
                 if nb.get('title') == title:
                     notebook_id = nb.get('id')
-                    print(f"  기존 노트북 사용: {notebook_id[:8]}...")
+                    print(f"  기존 노트북: {notebook_id[:8]}...")
                     break
         except:
             pass
 
     if not notebook_id:
-        notebook_id = create_notebook(title)
-        if notebook_id:
-            print(f"  새 노트북 생성: {notebook_id[:8]}...")
-        else:
-            print("  ❌ 노트북 생성 실패")
-            return None
+        success, stdout, _ = run_nlm(["notebook", "create", title])
+        if success:
+            try:
+                data = json.loads(stdout)
+                notebook_id = data.get('id')
+                print(f"  새 노트북 생성: {notebook_id[:8]}...")
+            except:
+                pass
 
-    # 3. 연구 및 소스 추가
-    print(f"\n[3/6] 연구 자료 수집...")
+    if not notebook_id:
+        print("  ❌ 노트북 생성 실패")
+        return None
+
+    # 3. 연구 (멀티 에이전트 모니터링)
+    print(f"\n[3/6] 연구 자료 수집 (멀티 에이전트)...")
     total_sources = 0
     for query in research_queries:
-        success, count = research_and_import(notebook_id, query)
+        success, count = await agent.run_research_with_monitoring(notebook_id, query)
         total_sources += count
-    print(f"  총 {total_sources}개 소스 추가")
+    print(f"\n  총 {total_sources}개 소스 추가")
 
-    # 4. 슬라이드 생성
-    print(f"\n[4/6] 슬라이드 생성...")
-    artifact_id = create_slides(notebook_id, language=language, focus=focus)
+    # 4. 슬라이드 생성 (멀티 에이전트 모니터링)
+    print(f"\n[4/6] 슬라이드 생성 (멀티 에이전트)...")
+    artifact_id = await agent.create_slides_with_monitoring(
+        notebook_id,
+        language=language,
+        focus=focus
+    )
+
     if not artifact_id:
-        print("  ⚠️ 슬라이드 생성 시작 실패")
+        print("  ⚠️ 슬라이드 생성 실패")
 
-    # 5. 생성 완료 대기 및 다운로드
+    # 5. 다운로드
     print(f"\n[5/6] 다운로드...")
-    wait_for_slides(notebook_id, timeout=300)
-
-    # 브라우저로 다운로드 (CLI 버그 우회)
-    pdf_path = asyncio.run(download_via_browser(notebook_id, DOWNLOAD_DIR))
+    pdf_path = await download_via_browser(notebook_id, DOWNLOAD_DIR)
 
     if not pdf_path or not pdf_path.exists():
         print("  ❌ 다운로드 실패")
@@ -343,6 +255,14 @@ def run_full_automation(title, research_queries, focus=None, language="ko"):
     pptx_path, slide_count = pdf_to_pptx(pdf_path)
     print(f"  ✓ PPTX: {pptx_path.name} ({slide_count}슬라이드)")
 
+    # 메모리 통계 출력
+    stats = agent.get_memory_stats()
+    print("\n" + "-" * 40)
+    print("에이전트 통계:")
+    print(f"  생성된 에이전트: {stats['agents_created']}개")
+    print(f"  총 작업: {stats['performance']['total_tasks']}")
+    print(f"  성공률: {stats['performance']['successful_tasks']}/{stats['performance']['total_tasks']}")
+
     print("\n" + "=" * 60)
     print("완료!")
     print(f"  PDF:  {pdf_path}")
@@ -353,11 +273,17 @@ def run_full_automation(title, research_queries, focus=None, language="ko"):
         'notebook_id': notebook_id,
         'pdf': str(pdf_path),
         'pptx': str(pptx_path),
-        'slides': slide_count
+        'slides': slide_count,
+        'agent_stats': stats
     }
 
+
+def run_full_automation(title, research_queries, focus=None, language="ko"):
+    """동기 버전 래퍼"""
+    return asyncio.run(run_full_automation_async(title, research_queries, focus, language))
+
+
 if __name__ == "__main__":
-    # 예시 실행
     result = run_full_automation(
         title="견관절회전근개 파열",
         research_queries=[
