@@ -10,7 +10,7 @@ if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
 
 NOTEBOOK_ID = "9204bd03-cddb-4866-8f7d-bcffcf7aff97"
-DOWNLOAD_DIR = Path("D:/Entertainments/DevEnvironment/notebooklm")
+DOWNLOAD_DIR = Path("G:/내 드라이브/notebooklm")
 
 async def main():
     from playwright.async_api import async_playwright

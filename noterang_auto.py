@@ -26,7 +26,7 @@ from noterang.agent_manager import get_noterang_agent, AgentTask, AgentStatus
 
 # 설정
 NLM_EXE = Path.home() / "AppData/Roaming/Python/Python313/Scripts/nlm.exe"
-DOWNLOAD_DIR = Path("D:/Entertainments/DevEnvironment/notebooklm")
+DOWNLOAD_DIR = Path("G:/내 드라이브/notebooklm")
 AUTH_DIR = Path.home() / ".notebooklm-mcp-cli"
 
 

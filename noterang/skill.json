@@ -8,7 +8,7 @@
   "category": "productivity",
   "tags": ["notebooklm", "ai", "content-generation", "research", "automation"],
   "entry_point": "noterang.py",
-  "work_directory": "D:/Entertainments/DevEnvironment/notebooklm",
+  "work_directory": "G:/내 드라이브/notebooklm",
   "dependencies": {
     "python": ">=3.10",
     "packages": [
@@ -33,7 +33,7 @@
   "conductor_config": {
     "memory_enabled": true,
     "auto_save_results": true,
-    "results_directory": "D:/Entertainments/DevEnvironment/notebooklm"
+    "results_directory": "G:/내 드라이브/notebooklm"
   },
   "usage_examples": [
     {

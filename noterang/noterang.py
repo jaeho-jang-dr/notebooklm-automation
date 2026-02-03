@@ -19,7 +19,7 @@ class NoterangAgent:
 
     def __init__(self):
         self.auth_path = Path.home() / ".notebooklm-mcp-cli" / "auth.json"
-        self.work_dir = Path("D:/Entertainments/DevEnvironment/notebooklm")
+        self.work_dir = Path("G:/내 드라이브/notebooklm")
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self.client = None
 

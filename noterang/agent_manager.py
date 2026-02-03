@@ -62,7 +62,7 @@ class AgentMemory:
     """에이전트 메모리 - 상태 및 학습 정보 저장"""
 
     def __init__(self, memory_path: Path = None):
-        self.memory_path = memory_path or Path("D:/Entertainments/DevEnvironment/notebooklm/agent_memory.json")
+        self.memory_path = memory_path or Path("G:/내 드라이브/notebooklm/agent_memory.json")
         self.memory_path.parent.mkdir(parents=True, exist_ok=True)
         self.data = self._load()
 
