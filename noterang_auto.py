@@ -20,7 +20,7 @@ if sys.platform == 'win32':
 
 # 경로 설정
 SCRIPT_DIR = Path(__file__).parent
-sys.path.insert(0, str(SCRIPT_DIR / "noterang"))
+sys.path.insert(0, str(SCRIPT_DIR))
 
 from noterang.agent_manager import get_noterang_agent, AgentTask, AgentStatus
 
@@ -87,6 +87,30 @@ def check_auth():
     sync_auth()
     success, stdout, _ = run_nlm(["login", "--check"])
     return success and stdout and "valid" in stdout.lower()
+
+
+async def ensure_auth():
+    """인증 확인 및 필요시 자동 로그인"""
+    # 먼저 기존 인증 확인
+    if check_auth():
+        return True
+
+    # 실패하면 자동 로그인 시도
+    print("  인증 만료 - 자동 로그인 시도...")
+    from auto_login import auto_login
+
+    # headless로 먼저 시도
+    if await auto_login(headless=True, timeout=30):
+        sync_auth()
+        return check_auth()
+
+    # 실패하면 브라우저로 시도
+    print("  백그라운드 실패 - 브라우저로 재시도...")
+    if await auto_login(headless=False, timeout=120):
+        sync_auth()
+        return check_auth()
+
+    return False
 
 
 async def download_via_browser(notebook_id, output_dir):
@@ -185,10 +209,10 @@ async def run_full_automation_async(title, research_queries, focus=None, languag
     print(f"노트랑 멀티 에이전트 자동화: {title}")
     print("=" * 60)
 
-    # 1. 인증 확인
+    # 1. 인증 확인 (자동 로그인 포함)
     print("\n[1/6] 인증 확인...")
-    if not check_auth():
-        print("  ❌ 인증 실패. notebooklm-mcp-auth 실행 필요")
+    if not await ensure_auth():
+        print("  ❌ 인증 실패 - 수동 로그인 필요")
         return None
     print("  ✓ 인증 유효")
 
