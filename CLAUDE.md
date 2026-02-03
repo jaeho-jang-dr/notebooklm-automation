@@ -48,6 +48,49 @@ result = run_full_automation(
 - `helper`: 타임아웃 시 투입
 - `recovery`: 에러 시 투입
 
+## 병렬 노트북 생성 (대량 생산용)
+
+### 사용법
+```python
+from run_parallel import run_parallel
+import asyncio
+
+topics = [
+    {"title": "족관절 염좌", "queries": ["염좌 원인", "염좌 치료", "염좌 재활"]},
+    {"title": "족관절 골절", "queries": ["골절 원인", "골절 수술", "골절 재활"]},
+]
+
+results = asyncio.run(run_parallel(topics))
+```
+
+### 워크플로우 특징
+| 단계 | 병렬 여부 | 비고 |
+|------|----------|------|
+| 노트북 생성 | ✓ 병렬 | asyncio.gather() |
+| 연구 수집 | ✓ 병렬 | 각 노트북 독립 실행 |
+| 슬라이드 생성 | ✓ 병렬 | 동시 요청 가능 |
+| 다운로드 | ✗ 순차 | 브라우저 충돌 방지 |
+| PPTX 변환 | ✗ 순차 | 다운로드 후 즉시 변환 |
+
+### 다운로드 방법 (중요)
+```python
+# more_vert 메뉴 위치 클릭 (스튜디오 패널 슬라이드 카드)
+await page.mouse.click(1846, 365)
+await asyncio.sleep(1.5)
+
+# 메뉴에서 "Download PDF Document" 선택
+menu_items = await page.query_selector_all('[role="menuitem"]')
+for item in menu_items:
+    text = await item.inner_text()
+    if 'Download PDF' in text:
+        await item.click()
+```
+
+### 성공 사례
+- 2026-02-03: 족관절 3종 (염좌, 골관절염, 골절)
+- 각 15슬라이드, PDF+PPTX 생성 완료
+- 저장: `G:/내 드라이브/notebooklm/`
+
 ## Playwright MCP Guide
 
 File paths:
