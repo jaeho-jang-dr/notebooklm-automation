@@ -6,6 +6,8 @@ __pycache__/
 .Python
 venv/
 .env
+.env.local
+.env.*
 
 # Downloads and generated files
 downloads/*.pdf
