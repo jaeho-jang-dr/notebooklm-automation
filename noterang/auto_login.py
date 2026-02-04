@@ -117,28 +117,48 @@ async def full_auto_login(headless: bool = False) -> bool:
             if not totp_input:
                 print("  Push 알림 방식 감지, OTP 방식으로 전환...")
 
-                # "다른 방법 시도" 클릭
-                other_btn = await page.query_selector(
-                    'button:has-text("다른 방법 시도"), button:has-text("Try another way")'
-                )
-                if other_btn:
-                    await other_btn.click()
+                # "다른 방법 시도" 클릭 - 텍스트로 직접 찾기
+                try:
+                    await page.click('text=다른 방법 시도', timeout=5000)
                     await asyncio.sleep(2)
+                    print("  ✓ 다른 방법 시도 클릭")
+                except:
+                    try:
+                        await page.click('text=Try another way', timeout=3000)
+                        await asyncio.sleep(2)
+                    except:
+                        pass
 
-                    # OTP/Authenticator 옵션 선택 (challengetype=5)
-                    otp_option = await page.query_selector(
-                        '[data-challengetype="5"]'  # TOTP challenge type
-                    )
-                    if otp_option:
-                        await otp_option.click()
-                        await asyncio.sleep(3)
-                        print("  ✓ OTP 방식 선택")
+                # OTP/Authenticator 앱 옵션 선택
+                try:
+                    # Google OTP 앱 옵션 찾기
+                    otp_options = [
+                        'text=Google OTP',
+                        'text=Authenticator',
+                        'text=인증 앱',
+                        'text=OTP 앱',
+                        '[data-challengetype="6"]',  # TOTP
+                        '[data-challengetype="5"]',
+                    ]
+                    for selector in otp_options:
+                        try:
+                            await page.click(selector, timeout=2000)
+                            print(f"  ✓ OTP 방식 선택: {selector}")
+                            await asyncio.sleep(3)
+                            break
+                        except:
+                            continue
+                except Exception as e:
+                    print(f"  OTP 옵션 선택 실패: {e}")
 
-                    # 다시 TOTP 필드 찾기
+                # 다시 TOTP 필드 찾기
+                try:
                     totp_input = await page.wait_for_selector(
                         'input[name="totpPin"], input[type="tel"], input[id="totpPin"], input[autocomplete="one-time-code"]',
                         timeout=10000
                     )
+                except:
+                    pass
 
             if totp_input:
                 # TOTP 코드 생성

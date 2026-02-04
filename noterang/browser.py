@@ -68,18 +68,43 @@ class NotebookLMBrowser:
             await self.playwright.stop()
 
     async def ensure_logged_in(self) -> bool:
-        """로그인 확인"""
+        """로그인 확인 (완전 자동 로그인 포함)"""
         await self.page.goto(self.base_url, wait_until='domcontentloaded', timeout=30000)
         await asyncio.sleep(3)
 
         # 로그인 페이지로 리다이렉트 되었는지 확인
         if 'accounts.google.com' in self.page.url:
-            print("  로그인 필요...")
-            # 앱 비밀번호 입력 시도
-            if self.config.notebooklm_app_password:
-                await self._try_app_password()
+            print("  로그인 필요 - 완전 자동 로그인 시작...")
 
-            # 최대 2분 대기
+            # 완전 자동 로그인 시도 (TOTP 포함)
+            try:
+                from .auto_login import full_auto_login, BROWSER_PROFILE
+                success = await full_auto_login(headless=self.config.browser_headless)
+
+                if success:
+                    # 자동 로그인 성공 후 브라우저 재시작
+                    await self.close()
+                    from playwright.async_api import async_playwright
+                    self.playwright = await async_playwright().start()
+                    self.context = await self.playwright.chromium.launch_persistent_context(
+                        user_data_dir=str(BROWSER_PROFILE),
+                        headless=self.config.browser_headless,
+                        args=['--disable-blink-features=AutomationControlled'],
+                        viewport={
+                            'width': self.config.browser_viewport_width,
+                            'height': self.config.browser_viewport_height
+                        },
+                        accept_downloads=True,
+                        downloads_path=str(self.config.download_dir),
+                    )
+                    self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
+                    await self.page.goto(self.base_url, timeout=30000)
+                    await asyncio.sleep(3)
+                    return True
+            except Exception as e:
+                print(f"  완전 자동 로그인 실패: {e}")
+
+            # 폴백: 수동 대기
             start = time.time()
             while time.time() - start < 120:
                 if 'notebooklm.google.com' in self.page.url and 'accounts.google' not in self.page.url:
