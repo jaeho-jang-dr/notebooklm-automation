@@ -104,6 +104,16 @@ from .browser import (
     run_with_browser,
 )
 
+# Prompts (100개 슬라이드 디자인 프롬프트)
+from .prompts import (
+    SlidePrompts,
+    get_slide_prompts,
+    list_slide_styles,
+    get_slide_prompt,
+    search_slide_styles,
+    print_style_catalog,
+)
+
 __all__ = [
     # Version
     "__version__",
@@ -170,4 +180,12 @@ __all__ = [
     # Browser
     "NotebookLMBrowser",
     "run_with_browser",
+
+    # Prompts
+    "SlidePrompts",
+    "get_slide_prompts",
+    "list_slide_styles",
+    "get_slide_prompt",
+    "search_slide_styles",
+    "print_style_catalog",
 ]

@@ -97,6 +97,14 @@ def main():
     convert_parser.add_argument("pdf_path", help="PDF 파일 경로")
     convert_parser.add_argument("--output", "-o", help="출력 경로")
 
+    # prompts 명령 (100개 슬라이드 디자인 프롬프트)
+    prompts_parser = subparsers.add_parser("prompts", help="슬라이드 디자인 프롬프트 관리")
+    prompts_parser.add_argument("--list", "-l", action="store_true", help="전체 스타일 목록")
+    prompts_parser.add_argument("--categories", "-c", action="store_true", help="카테고리 목록")
+    prompts_parser.add_argument("--get", "-g", help="특정 스타일 프롬프트 출력")
+    prompts_parser.add_argument("--search", "-s", help="스타일 검색")
+    prompts_parser.add_argument("--category", help="특정 카테고리 스타일 목록")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -120,6 +128,8 @@ def main():
         cmd_batch(args)
     elif args.command == "convert":
         cmd_convert(args)
+    elif args.command == "prompts":
+        cmd_prompts(args)
 
 
 def cmd_run(args):
@@ -271,6 +281,78 @@ def cmd_convert(args):
     pptx_path, count = pdf_to_pptx(pdf_path, output_path)
 
     print(f"✓ 변환 완료: {pptx_path} ({count}슬라이드)")
+
+
+def cmd_prompts(args):
+    """슬라이드 디자인 프롬프트 관리"""
+    from .prompts import SlidePrompts
+
+    prompts = SlidePrompts()
+
+    if args.list:
+        # 전체 스타일 목록
+        print(f"\n슬라이드 디자인 스타일 ({len(prompts)}개)")
+        print("=" * 50)
+        for category in prompts.list_categories():
+            styles = prompts.get_by_category(category)
+            print(f"\n[{category}] ({len(styles)}개)")
+            for style in styles:
+                print(f"  - {style['name']}")
+        return
+
+    if args.categories:
+        # 카테고리 목록
+        categories = prompts.list_categories()
+        print(f"\n카테고리 ({len(categories)}개):")
+        for cat in categories:
+            count = len(prompts.get_by_category(cat))
+            print(f"  - {cat} ({count}개)")
+        return
+
+    if args.category:
+        # 특정 카테고리 스타일
+        styles = prompts.get_by_category(args.category)
+        if not styles:
+            print(f"❌ 카테고리 없음: {args.category}")
+            return
+        print(f"\n[{args.category}] 스타일 ({len(styles)}개):")
+        for style in styles:
+            print(f"  - {style['name']}")
+        return
+
+    if args.search:
+        # 스타일 검색
+        results = prompts.search(args.search)
+        if not results:
+            print(f"❌ 검색 결과 없음: {args.search}")
+            return
+        print(f"\n'{args.search}' 검색 결과 ({len(results)}개):")
+        for style in results:
+            print(f"  - {style['name']} ({style['category']})")
+        return
+
+    if args.get:
+        # 특정 스타일 프롬프트
+        prompt = prompts.get_prompt(args.get)
+        if not prompt:
+            print(f"❌ 스타일 없음: {args.get}")
+            return
+        print(f"\n[{args.get}] 프롬프트:")
+        print("-" * 50)
+        print(prompt)
+        return
+
+    # 기본: 간략 정보
+    print(f"\n노트랑 슬라이드 프롬프트 ({len(prompts)}개 스타일)")
+    print("=" * 50)
+    print(f"기본 스타일: {prompts.default_style}")
+    print(f"카테고리: {', '.join(prompts.list_categories())}")
+    print("\n사용법:")
+    print("  --list, -l      전체 스타일 목록")
+    print("  --categories, -c 카테고리 목록")
+    print("  --get, -g STYLE  특정 스타일 프롬프트")
+    print("  --search, -s QUERY 스타일 검색")
+    print("  --category CAT   특정 카테고리 스타일")
 
 
 if __name__ == "__main__":

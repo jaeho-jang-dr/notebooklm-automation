@@ -299,26 +299,83 @@ class NotebookLMBrowser:
         await self.open_notebook(notebook_id)
         await asyncio.sleep(5)
 
-        # 스튜디오/생성 버튼 찾기
-        studio_btn = await self.page.query_selector(
-            'button:has-text("슬라이드"), '
-            'button:has-text("Slides"), '
-            'button:has-text("프레젠테이션"), '
-            '[aria-label*="slide"], '
-            '[aria-label*="presentation"]'
-        )
+        # 스튜디오/생성 버튼 찾기 - Debugging added
+        print("  🔍 슬라이드 버튼 찾는 중...", end="")
+        selectors = [
+             'button:has-text("슬라이드")',
+             'button:has-text("Slides")',
+             'button:has-text("프레젠테이션")',
+             '[aria-label*="slide"]',
+             '[aria-label*="presentation"]',
+             'button[data-test-id="studio-slide-button"]', # Hypothetical ID
+             # Chat response buttons
+             'button:has-text("Open presentation")',
+             'button:has-text("프레젠테이션 열기")',
+             'button:has-text("슬라이드 열기")',
+             'button:has-text("View Slides")',
+             '[aria-label*="Open presentation"]'
+        ]
+        
+        studio_btn = None
+        for sel in selectors:
+            studio_btn = await self.page.query_selector(sel)
+            if studio_btn:
+                print(f" 발견! ({sel})")
+                break
+        
+        if not studio_btn:
+             print(" 미발견. 화면의 버튼들을 나열합니다:")
+             buttons = await self.page.query_selector_all("button")
+             seen = set()
+             for btn in buttons:
+                 txt = await btn.inner_text()
+                 label = await btn.get_attribute("aria-label") or ""
+                 key = f"{txt.strip()} | {label.strip()}"
+                 # Clean up newlines
+                 key = key.replace("\n", " ")
+                 if len(key) > 5 and key not in seen:
+                     print(f"  - [Button] {key}")
+                     seen.add(key)
 
         if not studio_btn:
             # 스튜디오 패널 열기
+            print("  ⚠️ 스튜디오 패널 열기 시도...")
             studio_panel = await self.page.query_selector(
                 '[aria-label*="Studio"], '
                 'button:has-text("Studio"), '
                 '[data-panel="studio"]'
             )
             if studio_panel:
+                print("  ✓ 스튜디오 패널 클릭")
                 await studio_panel.click()
                 await asyncio.sleep(2)
-                studio_btn = await self.page.query_selector('button:has-text("슬라이드"), button:has-text("Slides")')
+                
+                # 다시 시도
+                for sel in selectors:
+                    studio_btn = await self.page.query_selector(sel)
+                    if studio_btn:
+                         print(f"  ✓ 패널 열고 버튼 발견! ({sel})")
+                         break
+                         
+        if not studio_btn:
+            # Last resort: Check all buttons for text
+            print("  ⚠️ 텍스트로 버튼 전수 검사...")
+            buttons = await self.page.query_selector_all("button")
+            for btn in buttons:
+                txt = await btn.inner_text()
+                if "슬라이드" in txt or "Slides" in txt or "Presentation" in txt:
+                    studio_btn = btn
+                    print(f"  ✓ 텍스트 매칭으로 발견: '{txt}'")
+                    break
+        
+        if not studio_btn:
+             # Look for "Saved responses" which might contain the slide button
+             print("  ⚠️ '저장된 응답' 등 다른 패널 확인...")
+             # ... (simplified)
+
+             print("  ❌ 버튼 못 찾음. 스크린샷 저장...")
+             await self.page.screenshot(path="debug_slides_fail.png", full_page=True)
+             return False
 
         if studio_btn:
             await studio_btn.click()
