@@ -72,6 +72,39 @@ python -m noterang config --show    # 설정 확인
 python -m noterang convert file.pdf # PDF 변환
 ```
 
+## 🔐 완전 자동 로그인 (2FA TOTP 포함)
+
+### 자동 로그인 흐름
+```
+[1] NotebookLM 접속
+[2] 이메일 자동 입력 (GOOGLE_EMAIL)
+[3] 비밀번호 자동 입력 (GOOGLE_PASSWORD)
+[4] "다른 방법 시도" 클릭 → "Google OTP" 선택
+[5] TOTP 코드 자동 생성/입력 (pyotp)
+[6] 로그인 완료!
+```
+
+### 인증 정보 파일 (`.env.local`)
+```bash
+GOOGLE_EMAIL=your@gmail.com
+GOOGLE_PASSWORD=yourpassword
+GOOGLE_2FA_SECRET=your2fasecretwithoutspaces
+NOTEBOOKLM_APP_PASSWORD=xxxx xxxx xxxx xxxx
+APIFY_API_KEY=apify_api_xxxxx
+```
+
+### 자동 로그인 명령
+```bash
+# 완전 자동 로그인 테스트
+python -m noterang.auto_login
+
+# TOTP 코드만 확인
+python -m noterang.auto_login --test-totp
+
+# 백그라운드 실행
+python -m noterang.auto_login --headless
+```
+
 ## 중요 규칙
 
 | 문제 | 해결책 |
@@ -79,12 +112,13 @@ python -m noterang convert file.pdf # PDF 변환
 | nlm CLI 버그 | **run_browser() 메서드 사용** |
 | 다운로드 403 | **Playwright 브라우저 사용** |
 | 슬라이드 언어 | **반드시 한글 "ko"** |
-| 로그인 필요 | `python -m noterang login --show` |
+| 로그인 필요 | **자동 로그인 (2FA TOTP 자동)** |
 
 ## 경로
 
 - 다운로드: `G:/내 드라이브/notebooklm/`
-- 인증: `~/.notebooklm-mcp-cli/`
+- 인증 정보: `./.env.local` (git 제외됨)
+- 브라우저 프로필: `~/.notebooklm-auto-v3/`
 - 설정: `./noterang_config.json`
 
 ## Conductor 통합
