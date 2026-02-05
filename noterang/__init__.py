@@ -114,10 +114,20 @@ from .prompts import (
     print_style_catalog,
 )
 
-# JPDF (PDF → 편집 가능 PPTX 변환)
-from .jpdf import (
-    JPDF,
-    convert as jpdf_convert,
+# Workflow (기본 워크플로우)
+from .workflow import (
+    NoterangWorkflow,
+    run_workflow,
+    select_design,
+    print_design_menu,
+    DESIGN_PRESETS,
+    MEDICAL_DESIGNS,
+)
+
+# Converter (PDF → PPTX)
+from .converter import (
+    pdf_to_pptx as convert_pdf_to_pptx,
+    batch_convert as batch_convert_pdf,
 )
 
 __all__ = [
@@ -195,7 +205,15 @@ __all__ = [
     "search_slide_styles",
     "print_style_catalog",
 
-    # JPDF
-    "JPDF",
-    "jpdf_convert",
+    # Workflow
+    "NoterangWorkflow",
+    "run_workflow",
+    "select_design",
+    "print_design_menu",
+    "DESIGN_PRESETS",
+    "MEDICAL_DESIGNS",
+
+    # Converter
+    "convert_pdf_to_pptx",
+    "batch_convert_pdf",
 ]

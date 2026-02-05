@@ -125,7 +125,31 @@ class SlidePrompts:
         """
         self._load()
         style = self._by_name.get(style_name)
-        return style["prompt"] if style else None
+        if not style:
+            return None
+
+        # 프롬프트가 있으면 반환
+        if "prompt" in style and style["prompt"]:
+            return style["prompt"]
+
+        # 프롬프트가 없으면 템플릿으로 생성
+        return self._generate_prompt(style["name"], style["category"])
+
+    def _generate_prompt(self, name: str, category: str) -> str:
+        """스타일 이름과 카테고리로 기본 프롬프트 생성"""
+        return f"""[NotebookLM 슬라이드 디자인 요청]
+
+■ 역할: 전문 프레젠테이션 디자이너
+■ 스타일: {name}
+■ 카테고리: {category}
+━━━━━━━━━━━━━━━━━━━━━━
+이 스타일의 특성을 살려 고품질 슬라이드를 생성해주세요.
+
+- '{name}' 스타일의 핵심 디자인 요소를 반영
+- '{category}' 카테고리에 어울리는 톤 & 매너 유지
+- 전문적이고 일관된 비주얼 구성
+━━━━━━━━━━━━━━━━━━━━━━
+위 가이드를 바탕으로 고품질 슬라이드를 생성해주세요."""
 
     def get_style(self, style_name: str) -> Optional[Dict[str, Any]]:
         """
