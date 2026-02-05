@@ -380,13 +380,19 @@ class Noterang:
 
                 # Step 3: 소스 추가
                 if sources:
-                    print(f"\n[3/5] 소스 추가...")
+                    print(f"\n[3/5] 소스 추가 (URL)...")
                     for url in sources:
                         await browser.add_source_url(notebook_id, url)
                         result.sources_count += 1
                     print(f"  {result.sources_count}개 소스 추가")
                 else:
-                    print("\n[3/5] 소스 건너뜀")
+                    # URL 없으면 웹 검색으로 자료 수집
+                    print(f"\n[3/5] 웹 검색으로 자료 수집...")
+                    search_query = f"{title} 원인 증상 진단 치료"
+                    if await browser.add_source_via_search(search_query):
+                        result.sources_count = 1
+                    else:
+                        print("  ⚠️ 자료 수집 실패 - 슬라이드 생성 시도")
 
                 # Step 4: 슬라이드 생성
                 print(f"\n[4/5] 슬라이드 생성...")

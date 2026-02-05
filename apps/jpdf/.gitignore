@@ -1,0 +1,12 @@
+# 민감 정보
+.env.local
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# 테스트 파일
+*.pptx
+*.pdf
+*.png

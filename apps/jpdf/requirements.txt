@@ -1,0 +1,9 @@
+# JPDF v1.1 - 의존성
+flask>=2.3.0
+pymupdf>=1.23.0
+opencv-python>=4.8.0
+python-pptx>=0.6.21
+requests>=2.31.0
+python-dotenv>=1.0.0
+numpy>=1.24.0
+werkzeug>=2.3.0

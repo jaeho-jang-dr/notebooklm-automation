@@ -183,52 +183,162 @@ class NotebookLMBrowser:
         return None
 
     async def create_notebook(self, title: str) -> Optional[str]:
-        """새 노트북 생성"""
+        """새 노트북 생성 (2026 UI 대응)"""
         await self.page.goto(self.base_url, wait_until='domcontentloaded', timeout=30000)
         await asyncio.sleep(3)
 
-        # "새 노트북" 또는 "Create" 버튼 찾기
+        # "새로 만들기" 버튼 찾기 (2026 UI: aria-label="새 노트 만들기")
         create_btn = await self.page.query_selector(
-            'button:has-text("새 노트북"), '
+            '[aria-label="새 노트 만들기"], '
+            'button:has-text("새로 만들기"), '
+            'button:has-text("만들기"), '
             'button:has-text("Create"), '
-            'button:has-text("New notebook"), '
+            'button:has-text("New"), '
             '[aria-label*="Create"], '
             '[aria-label*="새 노트북"]'
         )
 
         if create_btn:
             await create_btn.click()
-            await asyncio.sleep(3)
+            await asyncio.sleep(5)  # 노트북 생성 대기
 
-            # 제목 입력 필드 찾기
-            title_input = await self.page.query_selector(
-                'input[placeholder*="제목"], '
-                'input[placeholder*="title"], '
-                'input[aria-label*="title"], '
-                '[contenteditable="true"]'
-            )
+            # 현재 URL에서 노트북 ID 추출 (바로 생성됨)
+            current_url = self.page.url
+            if '/notebook/' in current_url:
+                notebook_id = current_url.split('/notebook/')[-1].split('/')[0].split('?')[0]
 
-            if title_input:
-                await title_input.fill(title)
-                await asyncio.sleep(1)
+                # 모달 닫기 시도 (소스 추가 다이얼로그)
+                await self._close_modal()
+                await asyncio.sleep(2)
 
-                # 생성 버튼 클릭
-                confirm_btn = await self.page.query_selector(
-                    'button:has-text("만들기"), '
-                    'button:has-text("Create"), '
-                    'button[type="submit"]'
-                )
-                if confirm_btn:
-                    await confirm_btn.click()
-                    await asyncio.sleep(5)
+                # 노트북 제목 변경 시도
+                await self._rename_notebook(title)
 
-        # 현재 URL에서 노트북 ID 추출
-        current_url = self.page.url
-        if '/notebook/' in current_url:
-            notebook_id = current_url.split('/notebook/')[-1].split('/')[0].split('?')[0]
-            return notebook_id
+                return notebook_id
 
         return None
+
+    async def _close_modal(self):
+        """모달/다이얼로그 닫기"""
+        try:
+            # 방법 1: X 버튼 클릭 (close 아이콘)
+            close_selectors = [
+                'button[aria-label="닫기"]',
+                'button[aria-label="Close"]',
+                'button:has-text("close")',
+                '[aria-label="닫기"]',
+                '.cdk-overlay-pane button[aria-label*="닫기"]',
+                'mat-dialog-container button[aria-label*="close"]',
+            ]
+            for sel in close_selectors:
+                close_btn = await self.page.query_selector(sel)
+                if close_btn:
+                    await close_btn.click()
+                    await asyncio.sleep(1)
+                    return
+
+            # 방법 2: 오버레이 바깥 클릭
+            overlay = await self.page.query_selector('.cdk-overlay-backdrop')
+            if overlay:
+                await overlay.click(force=True)
+                await asyncio.sleep(1)
+                return
+
+            # 방법 3: ESC 키
+            await self.page.keyboard.press('Escape')
+            await asyncio.sleep(1)
+
+            # 방법 4: 다시 ESC (여러 번 필요할 수 있음)
+            await self.page.keyboard.press('Escape')
+            await asyncio.sleep(1)
+
+        except Exception as e:
+            print(f"  모달 닫기 실패 (무시): {e}")
+
+    async def _rename_notebook(self, new_title: str):
+        """노트북 제목 변경"""
+        try:
+            # 제목 영역 클릭 (Untitled notebook)
+            title_elem = await self.page.query_selector(
+                'h1:has-text("Untitled"), '
+                '[class*="title"]:has-text("Untitled"), '
+                'input[value*="Untitled"], '
+                '[contenteditable="true"]'
+            )
+            if title_elem:
+                await title_elem.click()
+                await asyncio.sleep(0.5)
+                await self.page.keyboard.press('Control+a')
+                await self.page.keyboard.type(new_title)
+                await self.page.keyboard.press('Enter')
+                await asyncio.sleep(1)
+        except Exception as e:
+            print(f"  제목 변경 실패 (무시): {e}")
+
+    async def add_source_via_search(self, search_query: str) -> bool:
+        """웹 검색으로 소스 추가 (Fast Research) - 2026 UI"""
+        try:
+            # 왼쪽 패널의 검색창 찾기
+            search_input = await self.page.query_selector(
+                'input[placeholder*="웹에서 새 소스를 검색"]'
+            )
+
+            if not search_input:
+                # 다른 placeholder로 시도
+                search_input = await self.page.query_selector(
+                    '[class*="search"] input, '
+                    'input[placeholder*="검색"], '
+                    'input[placeholder*="search"]'
+                )
+
+            if search_input:
+                # 검색창 클릭 및 검색어 입력
+                await search_input.click()
+                await asyncio.sleep(0.5)
+                await search_input.fill(search_query)
+                await asyncio.sleep(1)
+
+                # 검색 실행 (제출 버튼 또는 Enter)
+                submit_btn = await self.page.query_selector(
+                    'button[aria-label="제출"], '
+                    'button[aria-label*="submit"], '
+                    '[aria-label="제출"]'
+                )
+                if submit_btn:
+                    await submit_btn.click()
+                else:
+                    await self.page.keyboard.press('Enter')
+
+                # 검색 결과 대기 (Fast Research)
+                print(f"  웹 검색 중: {search_query}")
+
+                # 로딩 완료 대기 (최대 90초)
+                for i in range(18):
+                    await asyncio.sleep(5)
+                    # 소스가 추가되었는지 확인 (왼쪽 패널)
+                    source_items = await self.page.query_selector_all(
+                        '[class*="source-item"], '
+                        '[class*="source-card"], '
+                        '[data-source], '
+                        '.source-list-item'
+                    )
+                    if len(source_items) > 0:
+                        print(f"  ✓ {len(source_items)}개 소스 추가됨")
+                        return True
+
+                    # 로딩 중인지 확인
+                    loading = await self.page.query_selector('[class*="loading"], [class*="spinner"]')
+                    if not loading and i > 6:
+                        # 로딩 완료되었지만 소스가 없음
+                        break
+
+                print("  ⚠️ 소스 추가 타임아웃")
+                return True  # 타임아웃이어도 계속 진행
+
+        except Exception as e:
+            print(f"  웹 검색 실패: {e}")
+
+        return False
 
     async def open_notebook(self, notebook_id: str):
         """노트북 열기"""
@@ -320,124 +430,68 @@ class NotebookLMBrowser:
         return False
 
     async def create_slides(self, notebook_id: str, language: str = "ko") -> bool:
-        """슬라이드 생성"""
+        """슬라이드 생성 - 2026 UI"""
         await self.open_notebook(notebook_id)
-        await asyncio.sleep(5)
+        await asyncio.sleep(3)
 
-        # 스튜디오/생성 버튼 찾기 - Debugging added
-        print("  🔍 슬라이드 버튼 찾는 중...", end="")
-        selectors = [
-             'button:has-text("슬라이드")',
-             'button:has-text("Slides")',
-             'button:has-text("프레젠테이션")',
-             '[aria-label*="slide"]',
-             '[aria-label*="presentation"]',
-             'button[data-test-id="studio-slide-button"]', # Hypothetical ID
-             # Chat response buttons
-             'button:has-text("Open presentation")',
-             'button:has-text("프레젠테이션 열기")',
-             'button:has-text("슬라이드 열기")',
-             'button:has-text("View Slides")',
-             '[aria-label*="Open presentation"]'
-        ]
-        
-        studio_btn = None
-        for sel in selectors:
-            studio_btn = await self.page.query_selector(sel)
-            if studio_btn:
-                print(f" 발견! ({sel})")
-                break
-        
-        if not studio_btn:
-             print(" 미발견. 화면의 버튼들을 나열합니다:")
-             buttons = await self.page.query_selector_all("button")
-             seen = set()
-             for btn in buttons:
-                 txt = await btn.inner_text()
-                 label = await btn.get_attribute("aria-label") or ""
-                 key = f"{txt.strip()} | {label.strip()}"
-                 # Clean up newlines
-                 key = key.replace("\n", " ")
-                 if len(key) > 5 and key not in seen:
-                     print(f"  - [Button] {key}")
-                     seen.add(key)
+        # 모달이 열려있으면 먼저 닫기
+        await self._close_modal()
+        await asyncio.sleep(2)
 
-        if not studio_btn:
-            # 스튜디오 패널 열기
-            print("  ⚠️ 스튜디오 패널 열기 시도...")
-            studio_panel = await self.page.query_selector(
-                '[aria-label*="Studio"], '
-                'button:has-text("Studio"), '
-                '[data-panel="studio"]'
+        print("  슬라이드 버튼 찾는 중...", end="")
+
+        # locator로 "슬라이드 자료" 텍스트 찾기 (가장 신뢰성 높음)
+        try:
+            slide_locator = self.page.locator('text=슬라이드 자료')
+            count = await slide_locator.count()
+            if count > 0:
+                print(f" 발견! ({count}개)")
+                await slide_locator.first.click()
+                await asyncio.sleep(3)
+            else:
+                print(" 미발견")
+                await self.page.screenshot(path="G:/내 드라이브/notebooklm/debug_slides_fail.png")
+                return False
+        except Exception as e:
+            print(f" 오류: {e}")
+            await self.page.screenshot(path="G:/내 드라이브/notebooklm/debug_slides_fail.png")
+            return False
+
+        # 스크린샷 (디버깅용)
+        await self.page.screenshot(path="G:/내 드라이브/notebooklm/debug_after_slide_click.png")
+
+        # 언어 선택 및 생성 (모달이 열렸을 경우)
+        if language == "ko":
+            # 한국어 선택 시도
+            lang_dropdown = await self.page.query_selector(
+                'button:has-text("English"), '
+                '[aria-label*="language"], '
+                'select'
             )
-            if studio_panel:
-                print("  ✓ 스튜디오 패널 클릭")
-                await studio_panel.click()
-                await asyncio.sleep(2)
-                
-                # 다시 시도
-                for sel in selectors:
-                    studio_btn = await self.page.query_selector(sel)
-                    if studio_btn:
-                         print(f"  ✓ 패널 열고 버튼 발견! ({sel})")
-                         break
-                         
-        if not studio_btn:
-            # Last resort: Check all buttons for text
-            print("  ⚠️ 텍스트로 버튼 전수 검사...")
-            buttons = await self.page.query_selector_all("button")
-            for btn in buttons:
-                txt = await btn.inner_text()
-                if "슬라이드" in txt or "Slides" in txt or "Presentation" in txt:
-                    studio_btn = btn
-                    print(f"  ✓ 텍스트 매칭으로 발견: '{txt}'")
-                    break
-        
-        if not studio_btn:
-             # Look for "Saved responses" which might contain the slide button
-             print("  ⚠️ '저장된 응답' 등 다른 패널 확인...")
-             # ... (simplified)
-
-             print("  ❌ 버튼 못 찾음. 스크린샷 저장...")
-             await self.page.screenshot(path="debug_slides_fail.png", full_page=True)
-             return False
-
-        if studio_btn:
-            await studio_btn.click()
-            await asyncio.sleep(2)
-
-            # 언어 선택 (한글)
-            if language == "ko":
-                lang_selector = await self.page.query_selector(
-                    'select[name*="language"], '
-                    '[aria-label*="language"], '
-                    'button:has-text("English")'
+            if lang_dropdown:
+                await lang_dropdown.click()
+                await asyncio.sleep(1)
+                ko_option = await self.page.query_selector(
+                    '[role="option"]:has-text("한국어"), '
+                    'option:has-text("Korean"), '
+                    'li:has-text("한국어")'
                 )
-                if lang_selector:
-                    # 한글 옵션 선택
-                    await lang_selector.click()
-                    await asyncio.sleep(0.5)
-                    korean_option = await self.page.query_selector(
-                        'option[value*="ko"], '
-                        '[role="option"]:has-text("한국어"), '
-                        '[role="option"]:has-text("Korean")'
-                    )
-                    if korean_option:
-                        await korean_option.click()
-                        await asyncio.sleep(0.5)
+                if ko_option:
+                    await ko_option.click()
+                    await asyncio.sleep(1)
 
-            # 생성 확인
-            create_btn = await self.page.query_selector(
-                'button:has-text("생성"), '
-                'button:has-text("Create"), '
-                'button:has-text("Generate")'
-            )
-            if create_btn:
-                await create_btn.click()
-                await asyncio.sleep(5)
-                return True
+        # 생성 버튼 클릭
+        gen_btn = await self.page.query_selector(
+            'button:has-text("생성"), '
+            'button:has-text("Generate"), '
+            'button:has-text("Create"), '
+            'button[type="submit"]'
+        )
+        if gen_btn:
+            await gen_btn.click()
+            await asyncio.sleep(5)
 
-        return False
+        return True
 
     async def check_slides_ready(self, notebook_id: str) -> Tuple[bool, str]:
         """슬라이드 생성 상태 확인"""

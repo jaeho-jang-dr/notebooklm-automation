@@ -135,7 +135,48 @@ if (detectNoterangTrigger(message)) {
 
 ## API 키 설정
 
-API 키는 `noterang_config.json`에서 관리 (git에 커밋하지 않음)
+API 키는 `.env.local`에서 관리 (git에 커밋하지 않음)
+
+---
+
+## 📝 JPDF - PDF → 편집 가능 PPTX 변환
+
+PDF 슬라이드에서 텍스트를 OCR로 추출하고, 배경을 복원(inpainting)한 후 편집 가능한 PPTX를 생성합니다.
+
+### 사용법
+
+```bash
+# noterang 모듈로 실행
+python -m noterang.jpdf input.pdf -o output.pptx
+
+# 옵션
+python -m noterang.jpdf input.pdf --no-inpaint  # 텍스트 제거 없이
+python -m noterang.jpdf input.pdf --font-size 20
+```
+
+### Python에서 사용
+
+```python
+from noterang import JPDF, jpdf_convert
+
+# 클래스 사용
+converter = JPDF()
+pptx_path, count = converter.convert("slides.pdf")
+
+# 간편 함수
+pptx_path, count = jpdf_convert("slides.pdf", "output.pptx")
+```
+
+### 필요한 API 키
+
+`.env.local`에 Google Vision API 키 필요:
+```
+GOOGLE_VISION_API_KEY=AIzaSy...
+```
+
+### 독립 앱
+
+`apps/jpdf/` 폴더에 독립 실행 버전이 있습니다.
 
 ---
 

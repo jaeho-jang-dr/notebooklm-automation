@@ -114,6 +114,12 @@ from .prompts import (
     print_style_catalog,
 )
 
+# JPDF (PDF → 편집 가능 PPTX 변환)
+from .jpdf import (
+    JPDF,
+    convert as jpdf_convert,
+)
+
 __all__ = [
     # Version
     "__version__",
@@ -188,4 +194,8 @@ __all__ = [
     "get_slide_prompt",
     "search_slide_styles",
     "print_style_catalog",
+
+    # JPDF
+    "JPDF",
+    "jpdf_convert",
 ]

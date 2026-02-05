@@ -1,0 +1,366 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Malgun Gothic', sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    padding: 20px;
+}
+
+.container {
+    max-width: 600px;
+    margin: 0 auto;
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+}
+
+header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 30px;
+    text-align: center;
+}
+
+header h1 {
+    font-size: 2.5rem;
+    margin-bottom: 8px;
+}
+
+header p {
+    opacity: 0.9;
+    font-size: 1.1rem;
+}
+
+main {
+    padding: 30px;
+}
+
+section {
+    margin-bottom: 25px;
+}
+
+/* API 키 입력 */
+.api-section label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #333;
+}
+
+.api-section input {
+    width: 100%;
+    padding: 12px 16px;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    font-size: 1rem;
+    transition: border-color 0.2s;
+}
+
+.api-section input:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.api-section small {
+    display: block;
+    margin-top: 6px;
+    color: #888;
+    font-size: 0.85rem;
+}
+
+/* 드롭존 */
+.drop-zone {
+    border: 3px dashed #ccc;
+    border-radius: 12px;
+    padding: 40px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+    background: #fafafa;
+}
+
+.drop-zone:hover, .drop-zone.dragover {
+    border-color: #667eea;
+    background: #f0f0ff;
+}
+
+.drop-icon {
+    font-size: 3rem;
+    margin-bottom: 15px;
+}
+
+.drop-zone p {
+    color: #555;
+    margin-bottom: 8px;
+}
+
+.drop-zone small {
+    color: #888;
+}
+
+/* 파일 정보 */
+.file-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 15px 20px;
+    background: #e8f4fd;
+    border-radius: 8px;
+    border: 2px solid #b3d9f7;
+}
+
+.file-name {
+    font-weight: 500;
+    color: #1565c0;
+    word-break: break-all;
+}
+
+.btn-remove {
+    background: #ff5252;
+    color: white;
+    border: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.btn-remove:hover {
+    background: #d32f2f;
+}
+
+/* 옵션 섹션 */
+.options-section h3 {
+    font-size: 1.1rem;
+    color: #333;
+    margin-bottom: 15px;
+}
+
+.option-group {
+    margin-bottom: 15px;
+}
+
+.option-group label {
+    display: block;
+    font-weight: 500;
+    margin-bottom: 8px;
+    color: #444;
+}
+
+.option-row {
+    display: flex;
+    gap: 20px;
+}
+
+.option-row .option-group {
+    flex: 1;
+}
+
+select, .option-group input[type="number"] {
+    width: 100%;
+    padding: 10px 14px;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    font-size: 1rem;
+    background: white;
+}
+
+select:focus, .option-group input[type="number"]:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.option-group small {
+    display: block;
+    margin-top: 4px;
+    color: #888;
+    font-size: 0.8rem;
+}
+
+/* 라디오 옵션 */
+.radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.radio-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 15px;
+    border: 2px solid #e0e0e0;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.radio-option:hover {
+    border-color: #b3b3b3;
+}
+
+.radio-option input[type="radio"] {
+    margin-top: 3px;
+    transform: scale(1.2);
+}
+
+.radio-option input[type="radio"]:checked + .radio-label strong {
+    color: #667eea;
+}
+
+.radio-option:has(input:checked) {
+    border-color: #667eea;
+    background: #f8f8ff;
+}
+
+.radio-label {
+    flex: 1;
+}
+
+.radio-label strong {
+    display: block;
+    font-size: 1rem;
+    margin-bottom: 4px;
+}
+
+.radio-label small {
+    color: #666;
+    font-size: 0.85rem;
+}
+
+/* 변환 버튼 */
+.btn-convert {
+    width: 100%;
+    padding: 16px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 1.2rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.btn-convert:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+}
+
+.btn-convert:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-loading {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.spinner {
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* 결과 */
+.result-section {
+    text-align: center;
+    padding: 25px;
+    border-radius: 12px;
+}
+
+.result-success {
+    background: #e8f5e9;
+    border: 2px solid #81c784;
+    border-radius: 12px;
+    padding: 25px;
+}
+
+.result-error {
+    background: #ffebee;
+    border: 2px solid #e57373;
+    border-radius: 12px;
+    padding: 25px;
+}
+
+.result-icon {
+    font-size: 3rem;
+    margin-bottom: 10px;
+}
+
+.result-section h3 {
+    margin-bottom: 15px;
+    color: #333;
+}
+
+.btn-download {
+    display: inline-block;
+    padding: 14px 30px;
+    background: #4caf50;
+    color: white;
+    text-decoration: none;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 1.1rem;
+    transition: all 0.3s;
+}
+
+.btn-download:hover {
+    background: #43a047;
+    transform: translateY(-2px);
+}
+
+.result-error p {
+    color: #c62828;
+    margin-top: 10px;
+}
+
+/* 푸터 */
+footer {
+    text-align: center;
+    padding: 20px;
+    background: #f5f5f5;
+    color: #888;
+    font-size: 0.9rem;
+}
+
+/* 반응형 */
+@media (max-width: 480px) {
+    body {
+        padding: 10px;
+    }
+
+    header {
+        padding: 20px;
+    }
+
+    header h1 {
+        font-size: 2rem;
+    }
+
+    main {
+        padding: 20px;
+    }
+
+    .option-row {
+        flex-direction: column;
+        gap: 15px;
+    }
+}

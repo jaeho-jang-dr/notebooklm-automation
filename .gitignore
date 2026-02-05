@@ -33,3 +33,4 @@ auth.json
 .idea/
 .vscode/
 *.swp
+.playwright-mcp/
