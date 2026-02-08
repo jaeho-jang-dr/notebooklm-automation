@@ -42,6 +42,16 @@ from .core import (
     run_batch,
 )
 
+# NLM Client (Python API)
+from .nlm_client import (
+    get_nlm_client,
+    close_nlm_client,
+    check_nlm_auth,
+    is_client_expired,
+    NLMClientError,
+    NLMAuthError,
+)
+
 # Auth
 from .auth import (
     auto_login,
@@ -146,6 +156,14 @@ __all__ = [
     "run_automation",
     "run_automation_sync",
     "run_batch",
+
+    # NLM Client
+    "get_nlm_client",
+    "close_nlm_client",
+    "check_nlm_auth",
+    "is_client_expired",
+    "NLMClientError",
+    "NLMAuthError",
 
     # Auth
     "auto_login",

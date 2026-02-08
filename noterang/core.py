@@ -21,6 +21,7 @@ from .config import get_config, NoterangConfig
 from .auth import ensure_auth, sync_auth, check_auth
 from .notebook import get_or_create_notebook, start_research, check_research_status, import_research, delete_notebook, list_notebooks
 from .artifacts import create_slides, check_studio_status, wait_for_completion
+from .nlm_client import get_nlm_client, close_nlm_client, NLMClientError
 from .download import download_via_browser, download_with_retries
 from .convert import pdf_to_pptx, Converter
 from .browser import NotebookLMBrowser
@@ -129,6 +130,7 @@ class Noterang:
             total_sources = 0
             if not skip_research and research_queries:
                 print(f"\n[3/6] 연구 자료 수집...")
+                await self._refresh_auth_if_needed()
                 for query in research_queries:
                     count = await self._run_research(notebook_id, query)
                     total_sources += count
@@ -139,20 +141,18 @@ class Noterang:
 
             # Step 4: 슬라이드 생성
             print(f"\n[4/6] 슬라이드 생성...")
+            await self._refresh_auth_if_needed()
             artifact_id = await self._create_slides(notebook_id, lang, focus)
             if not artifact_id:
                 result.error = "슬라이드 생성 실패"
                 # 생성 실패해도 다운로드 시도
             result.artifact_id = artifact_id
 
-            # Step 5: 다운로드
+            # Step 5: 다운로드 (API → Playwright fallback)
             if not skip_download:
                 print(f"\n[5/6] 다운로드...")
-                pdf_path = await download_with_retries(
-                    notebook_id,
-                    self.config.download_dir,
-                    "slides"
-                )
+                await self._refresh_auth_if_needed()
+                pdf_path = await self._download_slides(notebook_id)
                 if pdf_path and pdf_path.exists():
                     result.pdf_path = pdf_path
                     print(f"  ✓ PDF: {pdf_path.name}")
@@ -203,6 +203,13 @@ class Noterang:
 
         return result
 
+    async def _refresh_auth_if_needed(self):
+        """NLM 클라이언트 TTL 만료시 재인증"""
+        from .nlm_client import is_client_expired
+        if is_client_expired():
+            print("  인증 갱신 중...")
+            await ensure_auth()
+
     async def _run_research(self, notebook_id: str, query: str) -> int:
         """연구 실행 및 소스 가져오기"""
         print(f"  쿼리: {query}")
@@ -211,12 +218,12 @@ class Noterang:
         if not task_id:
             return 0
 
-        # 완료 대기
+        # 완료 대기 (task_id + query로 정확한 매칭)
         max_wait = self.config.timeout_research
         start = time.time()
 
         while time.time() - start < max_wait:
-            completed, status = check_research_status(notebook_id)
+            completed, status = check_research_status(notebook_id, task_id=task_id, query=query)
             if completed:
                 break
             await asyncio.sleep(5)
@@ -243,6 +250,29 @@ class Noterang:
         if completed:
             return artifact_id
         return None
+
+    async def _download_slides(self, notebook_id: str) -> Optional[Path]:
+        """API로 슬라이드 다운로드 시도, 실패시 Playwright fallback"""
+        # Primary: API download
+        try:
+            client = get_nlm_client()
+            target_path = self.config.download_dir / f"{notebook_id[:8]}_slides.pdf"
+            downloaded = await client.download_slide_deck(
+                notebook_id, str(target_path)
+            )
+            path = Path(downloaded)
+            if path.exists() and path.stat().st_size > 0:
+                print(f"  ✓ API 다운로드 성공")
+                return path
+        except Exception as e:
+            print(f"  API 다운로드 실패 ({e}) - Playwright fallback...")
+
+        # Fallback: Playwright browser download
+        return await download_with_retries(
+            notebook_id,
+            self.config.download_dir,
+            "slides"
+        )
 
     async def regenerate(
         self,
@@ -287,13 +317,9 @@ class Noterang:
             artifact_id = await self._create_slides(notebook_id, lang, focus)
             result.artifact_id = artifact_id
 
-            # 다운로드
+            # 다운로드 (API → Playwright fallback)
             print(f"\n[3/4] 다운로드...")
-            pdf_path = await download_with_retries(
-                notebook_id,
-                self.config.download_dir,
-                "slides"
-            )
+            pdf_path = await self._download_slides(notebook_id)
             if pdf_path and pdf_path.exists():
                 result.pdf_path = pdf_path
                 print(f"  ✓ PDF: {pdf_path.name}")
@@ -507,10 +533,8 @@ async def run_batch(
         for i, partial in enumerate(partial_results):
             if partial.notebook_id:
                 print(f"\n다운로드 {i+1}/{len(topics)}: {partial.notebook_title}")
-                pdf_path = await download_with_retries(
-                    partial.notebook_id,
-                    noterang.config.download_dir,
-                    "slides"
+                pdf_path = await noterang._download_slides(
+                    partial.notebook_id
                 )
                 if pdf_path and pdf_path.exists():
                     partial.pdf_path = pdf_path

@@ -8,6 +8,7 @@
 """
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import time
@@ -199,27 +200,33 @@ def sync_to_profile(auth_data: dict):
     config.profile_dir.mkdir(parents=True, exist_ok=True)
 
     # cookies.json (리스트 형식)
-    cookies_list = [
-        {
-            "name": name,
-            "value": value,
-            "domain": ".google.com",
-            "path": "/",
-            "expires": -1,
-            "httpOnly": False,
-            "secure": True,
-            "sameSite": "Lax"
-        }
-        for name, value in auth_data.get('cookies', {}).items()
-    ]
+    raw_cookies = auth_data.get('cookies', {})
+    if isinstance(raw_cookies, list):
+        # 이미 리스트 형식 (Playwright 쿠키)
+        cookies_list = raw_cookies
+    else:
+        # dict 형식 → 리스트로 변환
+        cookies_list = [
+            {
+                "name": name,
+                "value": value,
+                "domain": ".google.com",
+                "path": "/",
+                "expires": -1,
+                "httpOnly": False,
+                "secure": True,
+                "sameSite": "Lax"
+            }
+            for name, value in raw_cookies.items()
+        ]
 
     with open(config.profile_dir / "cookies.json", "w") as f:
         json.dump(cookies_list, f, indent=2)
 
-    # metadata.json
+    # metadata.json (csrf_token은 빈값으로 → 클라이언트가 자동 추출)
     with open(config.profile_dir / "metadata.json", "w") as f:
         json.dump({
-            "csrf_token": auth_data.get("csrf_token", ""),
+            "csrf_token": "",
             "session_id": auth_data.get("session_id", ""),
             "email": "",
             "last_validated": datetime.now().isoformat()
@@ -245,8 +252,7 @@ def sync_auth() -> bool:
 
 
 def run_nlm(args: list, timeout: int = 120) -> Tuple[bool, str, str]:
-    """nlm CLI 실행"""
-    import os
+    """nlm CLI 실행 (notebook.py, artifacts.py 호환용)"""
     config = get_config()
 
     cmd = [str(config.nlm_exe)] + args
@@ -263,22 +269,30 @@ def run_nlm(args: list, timeout: int = 120) -> Tuple[bool, str, str]:
 
 
 def check_auth() -> bool:
-    """인증 확인"""
+    """인증 확인 (Python API 직접 호출)"""
     sync_auth()
-    success, stdout, _ = run_nlm(["login", "--check"])
-    return success and stdout and "valid" in stdout.lower()
+    from .nlm_client import check_nlm_auth
+    return check_nlm_auth()
 
 
 async def ensure_auth() -> bool:
-    """인증 확인 및 필요시 자동 로그인"""
+    """인증 확인 및 필요시 자동 로그인 (TTL 만료 자동 감지)"""
+    from .nlm_client import is_client_expired, close_nlm_client
+
     config = get_config()
 
-    # 먼저 기존 인증 확인
+    # TTL 만료시 클라이언트 리셋 후 재인증
+    if is_client_expired():
+        print("  NLM 클라이언트 만료 → 재인증...")
+        close_nlm_client()
+
+    # 먼저 API로 인증 확인
     if check_auth():
         return True
 
-    # 실패하면 자동 로그인 시도
+    # 실패하면 클라이언트 리셋 후 자동 로그인 시도
     print("  인증 만료 - 자동 로그인 시도...")
+    close_nlm_client()
 
     # headless로 먼저 시도
     if await auto_login(headless=True, timeout=30):
@@ -294,63 +308,35 @@ async def ensure_auth() -> bool:
     return False
 
 
-def run_official_auth(timeout: int = 120) -> bool:
-    """공식 notebooklm-mcp-auth 도구 실행"""
-    config = get_config()
-
-    if not config.nlm_auth_exe.exists():
-        return False
-
-    print("  공식 인증 도구 실행...")
-
-    try:
-        result = subprocess.run(
-            [str(config.nlm_auth_exe)],
-            capture_output=True,
-            timeout=timeout,
-            text=True
-        )
-
-        if "SUCCESS" in result.stdout:
-            print("  ✓ 공식 도구 인증 성공")
-            return True
-        else:
-            return "Cookies:" in result.stdout
-
-    except subprocess.TimeoutExpired:
-        return False
-    except Exception:
-        return False
-
-
 async def ensure_logged_in() -> bool:
     """
     로그인 상태 확인 및 필요시 자동 로그인
-    1. 기존 인증 확인
-    2. 공식 도구 시도
-    3. Playwright headless
-    4. Playwright 브라우저 표시
+    1. API로 인증 확인
+    2. Playwright headless
+    3. Playwright 브라우저 표시
     """
-    # 1. 기존 인증 확인
+    # 1. API로 인증 확인
     if check_auth():
         print("  ✓ 기존 인증 유효")
         return True
 
-    # 2. 공식 도구로 시도
+    # 2. 클라이언트 리셋 후 Playwright headless 시도
+    from .nlm_client import close_nlm_client
+    close_nlm_client()
+
     print("자동 로그인 시도...")
-    if run_official_auth(timeout=60):
+    if await auto_login(headless=True, timeout=30):
         sync_auth()
         if check_auth():
             return True
 
-    # 3. Playwright headless로 시도
-    print("\n공식 도구 실패. Playwright로 재시도...")
-    if await auto_login(headless=True, timeout=30):
-        return True
-
-    # 4. 브라우저 표시하여 재시도
+    # 3. 브라우저 표시하여 재시도
     print("\n백그라운드 실패. 브라우저로 재시도...")
-    return await auto_login(headless=False, timeout=120)
+    if await auto_login(headless=False, timeout=120):
+        sync_auth()
+        return check_auth()
+
+    return False
 
 
 # 동기 버전

@@ -82,7 +82,7 @@ class NoterangConfig:
     notebooklm_app_password: str = ""  # 형식: "xxxx xxxx xxxx xxxx"
 
     # 타임아웃 설정 (초)
-    timeout_slides: int = 300       # 5분
+    timeout_slides: int = 600       # 10분 (NLM 슬라이드 생성은 느릴 수 있음)
     timeout_research: int = 120     # 2분
     timeout_download: int = 60      # 1분
     timeout_login: int = 120        # 2분
@@ -99,9 +99,15 @@ class NoterangConfig:
     debug: bool = False
     save_screenshots: bool = True
 
+    # 병렬 실행
+    worker_id: Optional[int] = None  # 병렬 실행시 워커 ID
+
     @property
     def browser_profile(self) -> Path:
-        return self.auth_dir / "browser_profile"
+        base = self.auth_dir / "browser_profile"
+        if self.worker_id is not None:
+            return base.parent / f"browser_profile_{self.worker_id}"
+        return base
 
     @property
     def profile_dir(self) -> Path:
@@ -137,6 +143,10 @@ class NoterangConfig:
         """딕셔너리에서 생성"""
         # null 값 제거 (기본값 사용)
         data = {k: v for k, v in data.items() if v is not None}
+
+        # dataclass 필드에 없는 키 제거
+        valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
+        data = {k: v for k, v in data.items() if k in valid_fields}
 
         # Path 변환
         path_fields = ['download_dir', 'auth_dir', 'nlm_exe', 'nlm_auth_exe']

@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-노트랑 아티팩트 모듈
-- 슬라이드 생성
-- 인포그래픽 생성
-- 스튜디오 상태 확인
+노트랑 아티팩트 모듈 (하이브리드: CLI + Python API)
+- 슬라이드/인포그래픽 생성: nlm CLI (Python API의 RPC 파라미터 불일치 우회)
+- 스튜디오 상태 확인: Python API (병렬 안전)
 """
 import asyncio
-import json
 import sys
 import time
 from typing import Optional, Dict, Tuple
@@ -16,6 +14,7 @@ if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
 
 from .config import get_config
+from .nlm_client import get_nlm_client
 from .auth import run_nlm
 
 
@@ -26,7 +25,7 @@ def create_slides(
     confirm: bool = True
 ) -> Optional[str]:
     """
-    슬라이드 생성 시작
+    슬라이드 생성 시작 (nlm CLI 사용 — Python API는 RPC 호환 문제)
 
     Args:
         notebook_id: 노트북 ID
@@ -50,16 +49,22 @@ def create_slides(
     success, stdout, stderr = run_nlm(args, timeout=60)
 
     if not success:
-        print(f"  ❌ 생성 시작 실패: {stderr[:100]}")
+        print(f"  ❌ 생성 시작 실패: {stderr[:200]}")
         return None
 
-    # Artifact ID 추출
-    for line in stdout.split('\n'):
-        if 'Artifact ID:' in line:
-            artifact_id = line.split('Artifact ID:')[1].strip()
-            print(f"  Artifact ID: {artifact_id}")
-            return artifact_id
+    # "Slide deck generation started" 확인
+    if "started" in stdout.lower() or "생성" in stdout:
+        # Artifact ID가 있으면 추출
+        for line in stdout.split('\n'):
+            if 'Artifact ID:' in line:
+                artifact_id = line.split('Artifact ID:')[1].strip()
+                print(f"  Artifact ID: {artifact_id}")
+                return artifact_id
+        # Artifact ID 없어도 시작된 것으로 처리
+        print(f"  ✓ 생성 시작됨 (ID 추출 불가 — poll로 확인)")
+        return "pending"
 
+    print(f"  ❌ 생성 시작 실패: {stdout[:200]}")
     return None
 
 
@@ -70,7 +75,7 @@ def create_infographic(
     focus: str = None
 ) -> Optional[str]:
     """
-    인포그래픽 생성 시작
+    인포그래픽 생성 시작 (nlm CLI 사용)
 
     Args:
         notebook_id: 노트북 ID
@@ -92,45 +97,77 @@ def create_infographic(
     success, stdout, stderr = run_nlm(args, timeout=60)
 
     if not success:
-        print(f"  ❌ 생성 시작 실패: {stderr[:100]}")
+        print(f"  ❌ 생성 시작 실패: {stderr[:200]}")
         return None
 
-    # Artifact ID 추출
-    for line in stdout.split('\n'):
-        if 'Artifact ID:' in line or 'id' in line.lower():
-            parts = line.split(':')
-            if len(parts) > 1:
-                return parts[1].strip().strip('"')
+    if "started" in stdout.lower() or "생성" in stdout:
+        for line in stdout.split('\n'):
+            if 'Artifact ID:' in line or 'id' in line.lower():
+                parts = line.split(':')
+                if len(parts) > 1:
+                    return parts[1].strip().strip('"')
+        return "pending"
 
     return None
 
 
 def check_studio_status(notebook_id: str) -> Tuple[str, Dict]:
     """
-    스튜디오 상태 확인
+    스튜디오 상태 확인 (Python API → CLI fallback)
 
     Returns:
         (status, full_response)
         status: "completed", "in_progress", "failed", "unknown"
     """
-    success, stdout, stderr = run_nlm(["studio", "status", notebook_id])
-
-    if not success:
-        return "unknown", {"error": stderr}
-
+    # Python API 시도
     try:
-        data = json.loads(stdout)
-        status = data.get("status", "unknown")
-        return status, data
-    except json.JSONDecodeError:
+        client = get_nlm_client()
+        artifacts = client.poll_studio_status(notebook_id)
+
+        if not artifacts:
+            return "in_progress", {"raw": "empty"}
+
+        latest = artifacts[0] if artifacts else None
+        if latest:
+            status = latest.get("status", "unknown")
+            return status, latest
+
+        return "unknown", {"raw": str(artifacts)}
+    except Exception:
+        pass
+
+    # CLI fallback (인코딩 에러 등 Python API 실패 시)
+    try:
+        success, stdout, stderr = run_nlm(["studio", "status", notebook_id])
+        if not success:
+            return "unknown", {"error": stderr}
+
+        import json
+        try:
+            data = json.loads(stdout)
+            if isinstance(data, list):
+                if len(data) == 0:
+                    return "in_progress", {"raw": stdout}
+                elif isinstance(data[0], dict):
+                    status = data[0].get("status", "unknown")
+                    return status, data[0]
+            elif isinstance(data, dict):
+                return data.get("status", "unknown"), data
+        except json.JSONDecodeError:
+            pass
+
         # 텍스트 파싱
-        if '"status": "completed"' in stdout or "'completed'" in stdout.lower():
+        lower = stdout.lower()
+        if "completed" in lower:
             return "completed", {"raw": stdout}
-        elif '"status": "in_progress"' in stdout or "'in_progress'" in stdout.lower():
+        elif "in_progress" in lower or "progress" in lower:
             return "in_progress", {"raw": stdout}
-        elif '"status": "failed"' in stdout or "'failed'" in stdout.lower():
+        elif "failed" in lower:
             return "failed", {"raw": stdout}
+
         return "unknown", {"raw": stdout}
+    except Exception as e:
+        return "unknown", {"error": str(e)}
 
 
 def is_generation_complete(notebook_id: str) -> bool:

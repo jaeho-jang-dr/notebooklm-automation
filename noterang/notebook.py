@@ -1,33 +1,32 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-노트랑 노트북 관리 모듈
+노트랑 노트북 관리 모듈 (Python API 직접 호출)
 - 노트북 생성/삭제/목록
 - 연구 자료 추가
 - 소스 관리
+
+run_nlm 서브프로세스 대신 NotebookLMClient Python API를 직접 호출하여
+병렬 실행시 프로세스 충돌 방지.
 """
-import json
 import sys
+import time
 from typing import Optional, List, Dict, Tuple
 
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
 
-from .auth import run_nlm
+from .nlm_client import get_nlm_client, NLMClientError, NLMAuthError
 
 
 def list_notebooks() -> List[Dict]:
     """노트북 목록 조회"""
-    success, stdout, stderr = run_nlm(["list", "notebooks"])
-
-    if not success:
-        print(f"  ❌ 노트북 목록 조회 실패: {stderr}")
-        return []
-
     try:
-        notebooks = json.loads(stdout)
-        return notebooks if isinstance(notebooks, list) else []
-    except json.JSONDecodeError:
+        client = get_nlm_client()
+        notebooks = client.list_notebooks()
+        return [{"id": nb.id, "title": nb.title} for nb in notebooks]
+    except Exception as e:
+        print(f"  ❌ 노트북 목록 조회 실패: {e}")
         return []
 
 
@@ -50,26 +49,16 @@ def create_notebook(title: str) -> Optional[str]:
     Returns:
         노트북 ID 또는 None
     """
-    success, stdout, stderr = run_nlm(["notebook", "create", title])
-
-    if not success:
-        print(f"  ❌ 노트북 생성 실패: {stderr}")
-        return None
-
     try:
-        data = json.loads(stdout)
-        notebook_id = data.get('id')
-        print(f"  ✓ 노트북 생성: {notebook_id[:8]}...")
-        return notebook_id
-    except (json.JSONDecodeError, TypeError):
-        # stdout에서 ID 추출 시도
-        if 'id' in stdout.lower():
-            lines = stdout.split('\n')
-            for line in lines:
-                if 'id' in line.lower():
-                    parts = line.split(':')
-                    if len(parts) > 1:
-                        return parts[1].strip().strip('"')
+        client = get_nlm_client()
+        nb = client.create_notebook(title)
+        if nb and nb.id:
+            print(f"  ✓ 노트북 생성: {nb.id[:8]}...")
+            return nb.id
+        print("  ❌ 노트북 생성 실패: 응답 없음")
+        return None
+    except Exception as e:
+        print(f"  ❌ 노트북 생성 실패: {e}")
         return None
 
 
@@ -83,13 +72,13 @@ def delete_notebook(notebook_id: str) -> bool:
     Returns:
         성공 여부
     """
-    success, stdout, stderr = run_nlm(["notebook", "delete", notebook_id, "--confirm"])
-
-    if success:
+    try:
+        client = get_nlm_client()
+        client.delete_notebook(notebook_id)
         print(f"  ✓ 노트북 삭제됨: {notebook_id[:8]}...")
         return True
-    else:
-        print(f"  ❌ 삭제 실패: {stderr}")
+    except Exception as e:
+        print(f"  ❌ 삭제 실패: {e}")
         return False
 
 
@@ -126,85 +115,95 @@ def start_research(notebook_id: str, query: str, mode: str = "fast") -> Optional
     Returns:
         Task ID 또는 None
     """
-    success, stdout, stderr = run_nlm([
-        "research", "start", query,
-        "--notebook-id", notebook_id,
-        "--mode", mode
-    ])
-
-    if not success:
-        print(f"  ❌ 연구 시작 실패: {stderr}")
+    try:
+        client = get_nlm_client()
+        result = client.start_research(notebook_id, query, source="web", mode=mode)
+        if result and result.get("task_id"):
+            return result["task_id"]
+        print(f"  ❌ 연구 시작 실패: 응답 없음")
+        return None
+    except Exception as e:
+        print(f"  ❌ 연구 시작 실패: {e}")
         return None
 
-    # Task ID 추출
-    for line in stdout.split('\n'):
-        if 'Task ID:' in line:
-            return line.split('Task ID:')[1].strip()
 
-    return None
-
-
-def check_research_status(notebook_id: str) -> Tuple[bool, str]:
+def check_research_status(notebook_id: str, task_id: str = None, query: str = None) -> Tuple[bool, str]:
     """
     연구 상태 확인
+
+    Args:
+        notebook_id: 노트북 ID
+        task_id: 특정 태스크 ID (선택)
+        query: 쿼리 텍스트 (fallback 매칭용)
 
     Returns:
         (완료 여부, 상태 문자열)
     """
-    success, stdout, stderr = run_nlm(["research", "status", notebook_id])
-
-    if not success:
-        return False, stderr
-
-    is_completed = "completed" in stdout.lower()
-    return is_completed, stdout
+    try:
+        client = get_nlm_client()
+        result = client.poll_research(notebook_id, target_task_id=task_id, target_query=query)
+        if not result:
+            return False, "no_research"
+        status = result.get("status", "unknown")
+        return status == "completed", status
+    except Exception as e:
+        return False, str(e)
 
 
 def import_research(notebook_id: str, task_id: str) -> int:
     """
-    연구 결과 가져오기
+    연구 결과 가져오기 (poll → import)
 
     Returns:
         가져온 소스 수
     """
-    success, stdout, stderr = run_nlm(["research", "import", notebook_id, task_id])
+    try:
+        client = get_nlm_client()
+        # poll로 소스 목록 조회
+        result = client.poll_research(notebook_id, target_task_id=task_id)
+        if not result or not result.get("sources"):
+            return 0
 
-    if not success:
+        sources = result["sources"]
+        # import
+        imported = client.import_research_sources(notebook_id, task_id, sources)
+        return len(imported)
+    except Exception as e:
+        print(f"  ❌ 연구 결과 가져오기 실패: {e}")
         return 0
-
-    # "Imported X sources" 추출
-    if "Imported" in stdout:
-        try:
-            return int(stdout.split("Imported")[1].split("source")[0].strip())
-        except (ValueError, IndexError):
-            pass
-
-    return 0
 
 
 def get_notebook_sources(notebook_id: str) -> List[Dict]:
     """노트북 소스 목록"""
-    success, stdout, stderr = run_nlm(["notebook", "sources", notebook_id])
-
-    if not success:
-        return []
-
     try:
-        return json.loads(stdout)
-    except json.JSONDecodeError:
+        client = get_nlm_client()
+        sources = client.get_notebook_sources_with_types(notebook_id)
+        return sources if isinstance(sources, list) else []
+    except Exception as e:
+        print(f"  ❌ 소스 목록 조회 실패: {e}")
         return []
 
 
 def add_source_url(notebook_id: str, url: str) -> bool:
     """URL 소스 추가"""
-    success, stdout, stderr = run_nlm(["source", "add", notebook_id, "--url", url])
-    return success
+    try:
+        client = get_nlm_client()
+        client.add_url_source(notebook_id, url)
+        return True
+    except Exception as e:
+        print(f"  ❌ URL 소스 추가 실패: {e}")
+        return False
 
 
 def add_source_text(notebook_id: str, text: str, title: str = "텍스트 소스") -> bool:
     """텍스트 소스 추가"""
-    success, stdout, stderr = run_nlm(["source", "add", notebook_id, "--text", text, "--title", title])
-    return success
+    try:
+        client = get_nlm_client()
+        client.add_text_source(notebook_id, text, title)
+        return True
+    except Exception as e:
+        print(f"  ❌ 텍스트 소스 추가 실패: {e}")
+        return False
 
 
 class NotebookManager:
