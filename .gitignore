@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.env
+.env.local
+.env.*
+
+# Downloads and generated files
+downloads/*.pdf
+downloads/*.pptx
+downloads/*.png
+downloads/*.mp3
+downloads/*.mp4
+
+# Logs and temp files
+*.log
+*.tmp
+*.json
+!skill.json
+
+# Screenshots and debug images
+*.png
+!noterang/*.png
+
+# Auth (sensitive)
+auth.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.playwright-mcp/

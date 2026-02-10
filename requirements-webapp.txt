@@ -1,0 +1,21 @@
+# PDF to Editable PPTX Webapp Dependencies
+# Usage: pip install -r requirements-webapp.txt
+
+# OCR Engine
+paddlepaddle>=2.5.0
+paddleocr>=2.7.0
+
+# Web Framework
+streamlit>=1.31.0
+
+# Image Processing
+pillow>=10.2.0
+
+# PDF Processing (already in main requirements)
+PyMuPDF>=1.23.0
+
+# PPTX Generation (already in main requirements)
+python-pptx>=0.6.21
+
+# Utilities
+numpy>=1.24.0

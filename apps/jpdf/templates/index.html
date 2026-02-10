@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JPDF - PDF/이미지 → 편집 가능 PPTX 변환기</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📄 JPDF</h1>
+            <p>PDF/이미지 → 편집 가능 PPTX 변환기</p>
+        </header>
+
+        <main>
+            <!-- API 키 입력 -->
+            <section class="api-section">
+                <label for="api_key">🔑 Google Vision API 키</label>
+                <input type="password" id="api_key" placeholder="API 키 입력 (선택사항)">
+                <small>비워두면 서버 설정 사용</small>
+            </section>
+
+            <!-- 파일 업로드 -->
+            <section class="upload-section">
+                <div class="drop-zone" id="dropZone">
+                    <div class="drop-icon">📁</div>
+                    <p>파일을 여기에 드래그하거나 클릭하여 선택</p>
+                    <small>PDF, PNG, JPG 지원 (최대 50MB)</small>
+                    <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg" hidden>
+                </div>
+                <div class="file-info" id="fileInfo" style="display: none;">
+                    <span class="file-name" id="fileName"></span>
+                    <button class="btn-remove" id="removeFile">✕</button>
+                </div>
+            </section>
+
+            <!-- 변환 옵션 -->
+            <section class="options-section">
+                <h3>⚙️ 변환 옵션</h3>
+
+                <div class="option-group">
+                    <label>변환 모드</label>
+                    <div class="radio-group">
+                        <label class="radio-option">
+                            <input type="radio" name="mode" value="editable" checked>
+                            <span class="radio-label">
+                                <strong>✏️ 수정 가능하게 만들기</strong>
+                                <small>텍스트 제거 → 배경 복원 → 편집 가능한 텍스트 박스</small>
+                            </span>
+                        </label>
+                        <label class="radio-option">
+                            <input type="radio" name="mode" value="direct">
+                            <span class="radio-label">
+                                <strong>🖼️ 바로 만들기</strong>
+                                <small>원본 이미지 배경 + 투명 텍스트 오버레이</small>
+                            </span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="option-row">
+                    <div class="option-group">
+                        <label for="fontFamily">폰트</label>
+                        <select id="fontFamily">
+                            <option value="Arial">Arial</option>
+                            <option value="Calibri">Calibri</option>
+                            <option value="Times New Roman">Times New Roman</option>
+                            <option value="Georgia">Georgia</option>
+                            <option value="Verdana">Verdana</option>
+                            <option value="Tahoma">Tahoma</option>
+                            <option value="Malgun Gothic">맑은 고딕</option>
+                            <option value="NanumGothic">나눔고딕</option>
+                        </select>
+                    </div>
+
+                    <div class="option-group">
+                        <label for="fontSize">폰트 크기</label>
+                        <input type="number" id="fontSize" placeholder="자동" min="8" max="72">
+                        <small>비워두면 자동 감지</small>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 변환 버튼 -->
+            <section class="action-section">
+                <button class="btn-convert" id="convertBtn" disabled>
+                    <span class="btn-text">🚀 PPTX로 변환</span>
+                    <span class="btn-loading" style="display: none;">
+                        <span class="spinner"></span> 변환 중...
+                    </span>
+                </button>
+            </section>
+
+            <!-- 결과 -->
+            <section class="result-section" id="resultSection" style="display: none;">
+                <div class="result-success" id="resultSuccess" style="display: none;">
+                    <div class="result-icon">✅</div>
+                    <h3>변환 완료!</h3>
+                    <a class="btn-download" id="downloadBtn" href="#">📥 PPTX 다운로드</a>
+                </div>
+                <div class="result-error" id="resultError" style="display: none;">
+                    <div class="result-icon">❌</div>
+                    <h3>오류 발생</h3>
+                    <p id="errorMessage"></p>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>JPDF v1.1 | Google Cloud Vision API 사용</p>
+        </footer>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const fileInfo = document.getElementById('fileInfo');
+        const fileName = document.getElementById('fileName');
+        const removeFile = document.getElementById('removeFile');
+        const convertBtn = document.getElementById('convertBtn');
+        const resultSection = document.getElementById('resultSection');
+        const resultSuccess = document.getElementById('resultSuccess');
+        const resultError = document.getElementById('resultError');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const errorMessage = document.getElementById('errorMessage');
+
+        let selectedFile = null;
+
+        // 드래그 앤 드롭
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        function handleFile(file) {
+            const allowedTypes = ['application/pdf', 'image/png', 'image/jpeg'];
+            if (!allowedTypes.includes(file.type)) {
+                alert('PDF, PNG, JPG 파일만 지원합니다.');
+                return;
+            }
+            if (file.size > 50 * 1024 * 1024) {
+                alert('파일 크기는 50MB 이하여야 합니다.');
+                return;
+            }
+
+            selectedFile = file;
+            fileName.textContent = file.name;
+            dropZone.style.display = 'none';
+            fileInfo.style.display = 'flex';
+            convertBtn.disabled = false;
+            resultSection.style.display = 'none';
+        }
+
+        removeFile.addEventListener('click', () => {
+            selectedFile = null;
+            fileInput.value = '';
+            dropZone.style.display = 'flex';
+            fileInfo.style.display = 'none';
+            convertBtn.disabled = true;
+        });
+
+        // 변환
+        convertBtn.addEventListener('click', async () => {
+            if (!selectedFile) return;
+
+            const btnText = convertBtn.querySelector('.btn-text');
+            const btnLoading = convertBtn.querySelector('.btn-loading');
+
+            convertBtn.disabled = true;
+            btnText.style.display = 'none';
+            btnLoading.style.display = 'inline-flex';
+            resultSection.style.display = 'none';
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            formData.append('api_key', document.getElementById('api_key').value);
+            formData.append('mode', document.querySelector('input[name="mode"]:checked').value);
+            formData.append('font_family', document.getElementById('fontFamily').value);
+            formData.append('font_size', document.getElementById('fontSize').value);
+
+            try {
+                const response = await fetch('/convert', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    downloadBtn.href = `/download/${data.job_id}/${data.filename}`;
+                    downloadBtn.download = data.filename;
+                    resultSuccess.style.display = 'block';
+                    resultError.style.display = 'none';
+                } else {
+                    errorMessage.textContent = data.error;
+                    resultSuccess.style.display = 'none';
+                    resultError.style.display = 'block';
+                }
+            } catch (err) {
+                errorMessage.textContent = '서버 연결 오류: ' + err.message;
+                resultSuccess.style.display = 'none';
+                resultError.style.display = 'block';
+            }
+
+            resultSection.style.display = 'block';
+            btnText.style.display = 'inline';
+            btnLoading.style.display = 'none';
+            convertBtn.disabled = false;
+        });
+    </script>
+</body>
+</html>

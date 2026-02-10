@@ -1,0 +1,62 @@
+{
+  "name": "noterang",
+  "display_name": "Noterang (노트랑)",
+  "version": "1.0.0",
+  "description": "Google NotebookLM을 완벽하게 컨트롤하는 AI 에이전트. 노트북 관리, 소스 추가, AI 콘텐츠 생성(인포그래픽, 오디오, 슬라이드 등)을 자동화합니다.",
+  "author": "Antigravity x Claude",
+  "type": "agent",
+  "category": "productivity",
+  "tags": ["notebooklm", "ai", "content-generation", "research", "automation"],
+  "entry_point": "noterang.py",
+  "work_directory": "G:/내 드라이브/notebooklm",
+  "dependencies": {
+    "python": ">=3.10",
+    "packages": [
+      "notebooklm-mcp-cli>=0.2.10"
+    ]
+  },
+  "capabilities": [
+    "list_notebooks",
+    "create_notebook",
+    "create_infographic",
+    "create_audio_overview",
+    "create_slide_deck",
+    "create_quiz",
+    "create_flashcards",
+    "create_report",
+    "create_video",
+    "add_url_source",
+    "add_file_source",
+    "query_notebook",
+    "research_topics"
+  ],
+  "conductor_config": {
+    "memory_enabled": true,
+    "auto_save_results": true,
+    "results_directory": "G:/내 드라이브/notebooklm"
+  },
+  "usage_examples": [
+    {
+      "description": "최신 노트북으로 인포그래픽 생성",
+      "command": "noterang을 사용해서 최신 노트북으로 인포그래픽 만들어줘"
+    },
+    {
+      "description": "새 노트북 생성하고 소스 추가",
+      "command": "noterang으로 'AI 연구' 노트북 만들고 이 URL들 추가해줘"
+    },
+    {
+      "description": "오디오 팟캐스트 생성",
+      "command": "noterang으로 이 노트북에서 오디오 팟캐스트 만들어줘"
+    },
+    {
+      "description": "노트북에 질문하기",
+      "command": "noterang으로 이 노트북에 '핵심 내용이 뭐야?' 물어봐줘"
+    }
+  ],
+  "installation": {
+    "steps": [
+      "pip install notebooklm-mcp-cli",
+      "notebooklm-mcp-auth"
+    ]
+  }
+}
