@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-파일 관리 - UUID 파일명 + uploads 복사
+파일 관리 - Firebase Storage 업로드
 """
-import shutil
 import sys
 import uuid
 from datetime import datetime
@@ -14,12 +13,24 @@ if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
 
 
-class FileManager:
-    """웹앱 uploads 디렉토리에 파일 복사"""
+def _get_storage_bucket(bucket_name: str):
+    """Firebase Storage bucket 가져오기 (lazy init)"""
+    import firebase_admin
+    from firebase_admin import storage
 
-    def __init__(self, uploads_dir: Path):
-        self.uploads_dir = uploads_dir
-        self.uploads_dir.mkdir(parents=True, exist_ok=True)
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app(options={
+            'storageBucket': bucket_name,
+        })
+
+    return storage.bucket(bucket_name)
+
+
+class FileManager:
+    """Firebase Storage에 파일 업로드"""
+
+    def __init__(self, storage_bucket: str = "miryangosweb.firebasestorage.app"):
+        self.storage_bucket = storage_bucket
 
     def copy_pdf_and_thumbnail(
         self,
@@ -28,29 +39,33 @@ class FileManager:
         thumbnail: bytes = None,
     ) -> Tuple[str, Optional[str]]:
         """
-        PDF 파일과 썸네일을 public/uploads에 복사
+        PDF 파일과 썸네일을 Firebase Storage에 업로드
 
         Returns:
-            (pdf_url, thumb_url) — 웹 경로 (예: /uploads/noterang_..._제목.pdf)
+            (pdf_url, thumb_url) — Firebase Storage 다운로드 URL
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         unique_id = uuid.uuid4().hex[:8]
         safe_title = title.replace(" ", "_").replace("/", "-")
 
-        # PDF 복사
-        pdf_name = f"noterang_{timestamp}_{unique_id}_{safe_title}.pdf"
-        pdf_dest = self.uploads_dir / pdf_name
-        shutil.copy2(str(pdf_path), str(pdf_dest))
-        pdf_url = f"/uploads/{pdf_name}"
-        print(f"  PDF 복사: {pdf_dest}")
+        bucket = _get_storage_bucket(self.storage_bucket)
 
-        # 썸네일 저장
+        # PDF 업로드
+        pdf_name = f"noterang_{timestamp}_{unique_id}_{safe_title}.pdf"
+        pdf_blob = bucket.blob(f"articles/{pdf_name}")
+        pdf_blob.upload_from_filename(str(pdf_path), content_type="application/pdf")
+        pdf_blob.make_public()
+        pdf_url = pdf_blob.public_url
+        print(f"  PDF 업로드: {pdf_url}")
+
+        # 썸네일 업로드
         thumb_url = None
         if thumbnail:
             thumb_name = f"noterang_{timestamp}_{unique_id}_{safe_title}_thumb.png"
-            thumb_dest = self.uploads_dir / thumb_name
-            thumb_dest.write_bytes(thumbnail)
-            thumb_url = f"/uploads/{thumb_name}"
-            print(f"  썸네일 저장: {thumb_dest}")
+            thumb_blob = bucket.blob(f"articles/{thumb_name}")
+            thumb_blob.upload_from_string(thumbnail, content_type="image/png")
+            thumb_blob.make_public()
+            thumb_url = thumb_blob.public_url
+            print(f"  썸네일 업로드: {thumb_url}")
 
         return pdf_url, thumb_url

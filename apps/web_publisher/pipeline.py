@@ -163,9 +163,9 @@ class WebPublishPipeline:
         finally:
             analyzer.close()
 
-        # Step 3: 파일 복사
-        print("\n[3/4] 웹앱에 파일 복사...")
-        file_mgr = FileManager(self.publisher_config.uploads_dir)
+        # Step 3: Firebase Storage 업로드
+        print("\n[3/4] Firebase Storage 업로드...")
+        file_mgr = FileManager(self.publisher_config.storage_bucket)
         pdf_url, thumb_url = file_mgr.copy_pdf_and_thumbnail(
             pdf_path, self.title, analysis.get("thumbnail")
         )

@@ -31,7 +31,7 @@ class WebPublisherConfig:
     """웹 자료실 퍼블리셔 설정"""
 
     # 웹앱 경로
-    webapp_dir: Path = field(default_factory=lambda: Path("D:/Projects/miryangosweb"))
+    webapp_dir: Path = field(default_factory=lambda: Path("D:/Entertainments/DevEnvironment/miryangosweb"))
 
     # Firebase
     firebase_project_id: str = "miryangosweb"
@@ -41,6 +41,9 @@ class WebPublisherConfig:
 
     # Vision API
     vision_api_key: str = ""
+
+    # Firebase Storage
+    storage_bucket: str = "miryangosweb.firebasestorage.app"
 
     # 기본값
     default_design: str = "인포그래픽"
@@ -68,5 +71,9 @@ class WebPublisherConfig:
         project_id = os.getenv('FIREBASE_PROJECT_ID')
         if project_id:
             config.firebase_project_id = project_id
+
+        bucket = os.getenv('FIREBASE_STORAGE_BUCKET')
+        if bucket:
+            config.storage_bucket = bucket
 
         return config
