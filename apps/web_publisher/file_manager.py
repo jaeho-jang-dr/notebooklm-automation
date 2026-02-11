@@ -15,8 +15,13 @@ if sys.platform == 'win32':
 
 def _get_storage_bucket(bucket_name: str):
     """Firebase Storage bucket 가져오기 (lazy init)"""
-    import firebase_admin
-    from firebase_admin import storage
+    try:
+        import firebase_admin
+        from firebase_admin import storage
+    except ImportError:
+        raise RuntimeError(
+            "firebase-admin 패키지가 필요합니다: pip install firebase-admin"
+        )
 
     if not firebase_admin._apps:
         firebase_admin.initialize_app(options={
