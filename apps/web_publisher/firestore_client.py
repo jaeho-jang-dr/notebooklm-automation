@@ -89,6 +89,16 @@ class FirestoreClient:
 
         # 슬라이드 제목들로 요약 구성
         titles = analysis.get("titles", [])
+
+        # PyMuPDF 제목 추출 실패 시 → OCR content에서 [슬라이드 N] 패턴으로 폴백
+        if not titles:
+            import re as _re
+            full_content_for_titles = analysis.get("content", "")
+            _matches = _re.findall(
+                r'\[슬라이드\s*\d+\]\s*\n(.+?)(?:\n|$)', full_content_for_titles
+            )
+            titles = [m.strip() for m in _matches if len(m.strip()) >= 2]
+
         if titles:
             title_summary = " / ".join(titles[:6])
             summary = f"{title} - {title_summary}"
@@ -96,6 +106,12 @@ class FirestoreClient:
                 summary += f" 외 {len(titles) - 6}장"
         else:
             summary = f"{title}에 대해 알기 쉽게 정리한 슬라이드 자료입니다."
+
+        # summary_text 재생성 (titles로부터)
+        if titles and not summary_text:
+            summary_text = "\n".join(
+                f"{i}. {t[:60]}" for i, t in enumerate(titles, 1)
+            )
 
         # 본문: 첫 페이지 이미지 + 슬라이드 목차 + 전체 텍스트
         content_parts = []
