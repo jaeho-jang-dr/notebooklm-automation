@@ -15,10 +15,10 @@ if sys.platform == 'win32':
 # .env.local 로드
 try:
     from dotenv import load_dotenv
-    for env_path in [
-        Path(__file__).parent / '.env.local',
-        Path("D:/Projects/notebooklm-automation/.env.local"),
-    ]:
+    # 현재 파일 위치 기준 상위 폴더들의 .env.local 탐색
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        env_path = parent / '.env.local'
         if env_path.exists():
             load_dotenv(env_path)
             break
@@ -30,8 +30,8 @@ except ImportError:
 class WebPublisherConfig:
     """웹 자료실 퍼블리셔 설정"""
 
-    # 웹앱 경로
-    webapp_dir: Path = field(default_factory=lambda: Path("D:/Entertainments/DevEnvironment/miryangosweb"))
+    # 웹앱 경로 (환경 변수가 없으면 실행 위치 기준 추측)
+    webapp_dir: Path = field(default_factory=lambda: Path(os.environ.get('WEBAPP_DIR', str(Path(__file__).resolve().parents[3]))))
 
     # Firebase
     firebase_project_id: str = "miryangosweb"

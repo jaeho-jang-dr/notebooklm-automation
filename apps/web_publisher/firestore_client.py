@@ -28,9 +28,34 @@ class FirestoreClient:
 
         if not firebase_admin._apps:
             try:
-                firebase_admin.initialize_app(options={
-                    'projectId': self.project_id,
-                })
+                import os
+                cred = None
+                # 서비스 계정 경로 확인 순서:
+                # 1. 환경 변수 FIREBASE_SERVICE_ACCOUNT_PATH
+                # 2. 사용자 홈/Downloads/miryangosweb-*.json
+                # 3. 프로젝트 루트/firebase-service-account.json
+                # 4. ADC (Default)
+
+                sa_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
+                if sa_path and Path(sa_path).exists():
+                    cred = firebase_admin.credentials.Certificate(sa_path)
+                else:
+                    sa_download = Path.home() / "Downloads" / "miryangosweb-firebase-adminsdk-fbsvc-e139abbe14.json"
+                    if sa_download.exists():
+                        cred = firebase_admin.credentials.Certificate(str(sa_download))
+                    else:
+                        sa_root = Path(__file__).resolve().parents[3] / "firebase-service-account.json"
+                        if sa_root.exists():
+                            cred = firebase_admin.credentials.Certificate(str(sa_root))
+
+                if cred:
+                    firebase_admin.initialize_app(cred, options={
+                        'projectId': self.project_id,
+                    })
+                else:
+                    firebase_admin.initialize_app(options={
+                        'projectId': self.project_id,
+                    })
                 print("  Firebase Admin 초기화 완료")
             except Exception as e:
                 print(f"  Firebase 초기화 실패: {e}")

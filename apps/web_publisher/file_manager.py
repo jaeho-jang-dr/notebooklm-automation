@@ -24,9 +24,28 @@ def _get_storage_bucket(bucket_name: str):
         )
 
     if not firebase_admin._apps:
-        firebase_admin.initialize_app(options={
-            'storageBucket': bucket_name,
-        })
+        import os
+        cred = None
+        sa_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
+        if sa_path and Path(sa_path).exists():
+            cred = firebase_admin.credentials.Certificate(sa_path)
+        else:
+            sa_download = Path.home() / "Downloads" / "miryangosweb-firebase-adminsdk-fbsvc-e139abbe14.json"
+            if sa_download.exists():
+                cred = firebase_admin.credentials.Certificate(str(sa_download))
+            else:
+                sa_root = Path(__file__).resolve().parents[3] / "firebase-service-account.json"
+                if sa_root.exists():
+                    cred = firebase_admin.credentials.Certificate(str(sa_root))
+
+        if cred:
+            firebase_admin.initialize_app(cred, options={
+                'storageBucket': bucket_name,
+            })
+        else:
+            firebase_admin.initialize_app(options={
+                'storageBucket': bucket_name,
+            })
 
     return storage.bucket(bucket_name)
 
