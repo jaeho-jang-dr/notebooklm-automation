@@ -346,6 +346,83 @@ class NotebookLMBrowser:
 
         return False
 
+    async def add_source_via_search(self, query: str) -> bool:
+        """웹 검색으로 소스 추가
+
+        Args:
+            query: 검색 쿼리 문자열
+
+        Returns:
+            성공 여부
+        """
+        try:
+            # 소스 추가 버튼 찾기
+            add_btn = await self.page.query_selector(
+                'button:has-text("소스 추가"), '
+                'button:has-text("Add source"), '
+                '[aria-label*="Add source"]'
+            )
+
+            if not add_btn:
+                print("  ⚠️ 소스 추가 버튼을 찾을 수 없습니다")
+                return False
+
+            await add_btn.click()
+            await asyncio.sleep(1)
+
+            # 검색 옵션 선택
+            search_option = await self.page.query_selector(
+                'button:has-text("검색"), '
+                'button:has-text("Search"), '
+                'button:has-text("Web search")'
+            )
+
+            if search_option:
+                await search_option.click()
+                await asyncio.sleep(1)
+
+                # 검색어 입력
+                search_input = await self.page.query_selector(
+                    'input[type="search"], '
+                    'input[placeholder*="검색"], '
+                    'input[placeholder*="Search"]'
+                )
+                if search_input:
+                    await search_input.fill(query)
+                    await asyncio.sleep(0.5)
+                    await search_input.press("Enter")
+                    await asyncio.sleep(3)
+
+                    # 첫 번째 결과 선택
+                    result_item = await self.page.query_selector(
+                        '[role="listitem"]:first-child, '
+                        '[class*="result"]:first-child, '
+                        '[class*="search-result"]:first-child'
+                    )
+                    if result_item:
+                        await result_item.click()
+                        await asyncio.sleep(1)
+
+                    # 추가/확인 버튼
+                    submit_btn = await self.page.query_selector(
+                        'button[type="submit"], '
+                        'button:has-text("추가"), '
+                        'button:has-text("Add"), '
+                        'button:has-text("Insert")'
+                    )
+                    if submit_btn:
+                        await submit_btn.click()
+                        await asyncio.sleep(3)
+                        print(f"  ✓ 웹 검색 소스 추가: {query[:30]}...")
+                        return True
+
+            print(f"  ⚠️ 웹 검색 소스 추가 실패")
+            return False
+
+        except Exception as e:
+            print(f"  ❌ 웹 검색 소스 추가 오류: {e}")
+            return False
+
     async def create_slides(
         self,
         language: str = "Korean",
@@ -417,7 +494,8 @@ class NotebookLMBrowser:
 
         if not slide_btn:
             print("  ❌ 슬라이드 버튼을 찾을 수 없습니다")
-            await self.page.screenshot(path="debug_no_slide_btn.png")
+            debug_path = str(self.config.download_dir / "debug_no_slide_btn.png")
+            await self.page.screenshot(path=debug_path)
             return False
 
         # 슬라이드 버튼 클릭
@@ -591,7 +669,7 @@ class NotebookLMBrowser:
         start = time.time()
 
         while time.time() - start < max_wait:
-            ready, status = await self.check_slides_ready(notebook_id)
+            ready, status = await self.get_slide_status(notebook_id)
 
             if ready:
                 print(f"  ✓ 슬라이드 생성 완료")
