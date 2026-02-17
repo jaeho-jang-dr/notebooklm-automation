@@ -157,8 +157,8 @@ async def full_auto_login(headless: bool = False) -> bool:
                         'input[name="totpPin"], input[type="tel"], input[id="totpPin"], input[autocomplete="one-time-code"]',
                         timeout=10000
                     )
-                except:
-                    pass
+                except Exception:
+                    print("  ⚠️ TOTP 입력 필드를 찾을 수 없습니다")
 
             if totp_input:
                 # TOTP 코드 생성
