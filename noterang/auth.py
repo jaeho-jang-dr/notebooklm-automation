@@ -8,6 +8,7 @@
 """
 import asyncio
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -20,6 +21,8 @@ if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
 
 from .config import get_config
+
+logger = logging.getLogger(__name__)
 
 
 async def auto_login(headless: bool = True, timeout: int = 60) -> bool:
@@ -43,22 +46,29 @@ async def auto_login(headless: bool = True, timeout: int = 60) -> bool:
 
     config.ensure_dirs()
 
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError, Error as PlaywrightError
+
     async with async_playwright() as p:
         print(f"\n[1/4] 브라우저 시작 (headless={headless})...")
 
-        context = await p.chromium.launch_persistent_context(
-            user_data_dir=str(config.browser_profile),
-            headless=headless,
-            args=[
-                '--disable-blink-features=AutomationControlled',
-                '--disable-infobars',
-                '--no-first-run',
-                '--no-default-browser-check',
-            ],
-            ignore_default_args=['--enable-automation'],
-            viewport={'width': 1280, 'height': 800} if headless else None,
-            no_viewport=not headless,
-        )
+        try:
+            context = await p.chromium.launch_persistent_context(
+                user_data_dir=str(config.browser_profile),
+                headless=headless,
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-infobars',
+                    '--no-first-run',
+                    '--no-default-browser-check',
+                ],
+                ignore_default_args=['--enable-automation'],
+                viewport={'width': 1280, 'height': 800} if headless else None,
+                no_viewport=not headless,
+            )
+        except PlaywrightError as e:
+            print(f"  ❌ 브라우저 시작 실패: {e}")
+            logger.error("Browser launch failed in auto_login", exc_info=True)
+            return False
 
         page = context.pages[0] if context.pages else await context.new_page()
 
@@ -70,8 +80,11 @@ async def auto_login(headless: bool = True, timeout: int = 60) -> bool:
                 wait_until='domcontentloaded',
                 timeout=30000
             )
-        except Exception as e:
-            print(f"  페이지 로드 중... ({e})")
+        except PlaywrightTimeoutError:
+            print("  ⚠️ 페이지 로드 타임아웃 (30초), 계속 진행...")
+            logger.warning("Page load timeout in auto_login, continuing anyway")
+        except PlaywrightError as e:
+            print(f"  ⚠️ 페이지 로드 오류: {e}")
 
         await asyncio.sleep(3)
 
@@ -154,11 +167,28 @@ async def auto_login(headless: bool = True, timeout: int = 60) -> bool:
             "auto_login": True
         }
 
-        with open(config.root_auth_file, 'w', encoding='utf-8') as f:
-            json.dump(auth_data, f, indent=2)
+        try:
+            config.root_auth_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(config.root_auth_file, 'w', encoding='utf-8') as f:
+                json.dump(auth_data, f, indent=2)
+        except PermissionError as e:
+            print(f"  ❌ 인증 파일 저장 권한 오류: {e}")
+            logger.error(f"Permission error writing auth file: {config.root_auth_file}", exc_info=True)
+            await context.close()
+            return False
+        except OSError as e:
+            print(f"  ❌ 인증 파일 저장 실패: {e}")
+            logger.error(f"OSError writing auth file: {config.root_auth_file}", exc_info=True)
+            await context.close()
+            return False
 
         # 프로필 디렉토리에 동기화
-        sync_to_profile(auth_data)
+        try:
+            sync_to_profile(auth_data)
+        except Exception as e:
+            # 동기화 실패는 치명적이지 않음 — 경고만 출력
+            print(f"  ⚠️ 프로필 동기화 실패 (무시): {e}")
+            logger.warning(f"Profile sync failed: {e}")
 
         print(f"  ✓ 저장 완료")
         print(f"    쿠키: {len(cookies_dict)}개")
@@ -197,7 +227,13 @@ async def _try_app_password_login(page, app_password: str):
 def sync_to_profile(auth_data: dict):
     """프로필 디렉토리에 인증 정보 동기화"""
     config = get_config()
-    config.profile_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        config.profile_dir.mkdir(parents=True, exist_ok=True)
+    except PermissionError as e:
+        raise PermissionError(f"프로필 디렉토리 생성 권한 없음: {config.profile_dir}") from e
+    except OSError as e:
+        raise OSError(f"프로필 디렉토리 생성 실패: {config.profile_dir}: {e}") from e
 
     # cookies.json (리스트 형식)
     raw_cookies = auth_data.get('cookies', {})
@@ -220,21 +256,26 @@ def sync_to_profile(auth_data: dict):
             for name, value in raw_cookies.items()
         ]
 
-    with open(config.profile_dir / "cookies.json", "w") as f:
-        json.dump(cookies_list, f, indent=2)
-
-    # metadata.json (csrf_token은 빈값으로 → 클라이언트가 자동 추출)
-    with open(config.profile_dir / "metadata.json", "w") as f:
-        json.dump({
+    files_to_write = {
+        "cookies.json": cookies_list,
+        "metadata.json": {
             "csrf_token": "",
             "session_id": auth_data.get("session_id", ""),
             "email": "",
             "last_validated": datetime.now().isoformat()
-        }, f, indent=2)
+        },
+        "auth.json": auth_data,
+    }
 
-    # auth.json
-    with open(config.profile_dir / "auth.json", "w") as f:
-        json.dump(auth_data, f, indent=2)
+    for filename, data in files_to_write.items():
+        file_path = config.profile_dir / filename
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except PermissionError as e:
+            raise PermissionError(f"파일 저장 권한 없음: {file_path}") from e
+        except OSError as e:
+            raise OSError(f"파일 저장 실패 ({filename}): {e}") from e
 
 
 def sync_auth() -> bool:
@@ -242,12 +283,28 @@ def sync_auth() -> bool:
     config = get_config()
 
     if not config.root_auth_file.exists():
+        logger.debug(f"Auth file not found: {config.root_auth_file}")
         return False
 
-    with open(config.root_auth_file) as f:
-        root_data = json.load(f)
+    try:
+        with open(config.root_auth_file, encoding='utf-8') as f:
+            root_data = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"  ❌ 인증 파일 파싱 실패 (손상된 JSON): {e}")
+        logger.error(f"Corrupt auth file: {config.root_auth_file}", exc_info=True)
+        return False
+    except OSError as e:
+        print(f"  ❌ 인증 파일 읽기 실패: {e}")
+        logger.error(f"Cannot read auth file: {config.root_auth_file}", exc_info=True)
+        return False
 
-    sync_to_profile(root_data)
+    try:
+        sync_to_profile(root_data)
+    except (PermissionError, OSError) as e:
+        print(f"  ❌ 인증 동기화 실패: {e}")
+        logger.error("sync_auth: profile sync failed", exc_info=True)
+        return False
+
     return True
 
 
@@ -255,7 +312,13 @@ def run_nlm(args: list, timeout: int = 120) -> Tuple[bool, str, str]:
     """nlm CLI 실행 (notebook.py, artifacts.py 호환용)"""
     config = get_config()
 
-    cmd = [str(config.nlm_exe)] + args
+    nlm_exe = config.nlm_exe
+    if not Path(nlm_exe).exists():
+        msg = f"nlm 실행 파일을 찾을 수 없습니다: {nlm_exe}"
+        logger.error(msg)
+        return False, '', msg
+
+    cmd = [str(nlm_exe)] + args
     env = os.environ.copy()
     env['PYTHONIOENCODING'] = 'utf-8'
 
@@ -264,8 +327,22 @@ def run_nlm(args: list, timeout: int = 120) -> Tuple[bool, str, str]:
         stdout = result.stdout.decode('utf-8', errors='replace') if result.stdout else ''
         stderr = result.stderr.decode('utf-8', errors='replace') if result.stderr else ''
         return result.returncode == 0, stdout, stderr
-    except Exception as e:
-        return False, '', str(e)
+    except subprocess.TimeoutExpired:
+        msg = f"nlm 실행 타임아웃 ({timeout}초): {' '.join(args[:3])}"
+        logger.error(msg)
+        return False, '', msg
+    except FileNotFoundError:
+        msg = f"nlm 실행 파일을 실행할 수 없습니다: {nlm_exe}"
+        logger.error(msg)
+        return False, '', msg
+    except PermissionError as e:
+        msg = f"nlm 실행 권한 없음: {e}"
+        logger.error(msg)
+        return False, '', msg
+    except OSError as e:
+        msg = f"nlm 실행 OS 오류: {e}"
+        logger.error(msg)
+        return False, '', msg
 
 
 def check_auth() -> bool:

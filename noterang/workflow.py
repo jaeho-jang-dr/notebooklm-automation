@@ -16,6 +16,7 @@ Usage:
     python -m noterang.workflow --title "족관절 염좌" --design "클레이 3D"
 """
 import asyncio
+import logging
 import sys
 import time
 from pathlib import Path
@@ -25,31 +26,51 @@ from datetime import datetime
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
 
-# 다운로드 경로
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
 DOWNLOAD_DIR = Path("G:/내 드라이브/notebooklm")
 
+DEFAULT_SLIDE_COUNT = 15
+DEFAULT_DESIGN_NAME = "미니멀 젠"
+DEFAULT_DESIGN_CATEGORY = "심플"
+DEFAULT_LANGUAGE = "ko"
+
+# Monitoring defaults
+DEFAULT_MONITOR_TIMEOUT = 300   # seconds
+DEFAULT_MONITOR_INTERVAL = 10   # seconds between completion checks
+
 # 9개 기본 디자인 프리셋
-DESIGN_PRESETS = [
-    {"id": 1, "name": "미니멀 젠", "category": "심플", "description": "깔끔한 기본 스타일"},
-    {"id": 2, "name": "클레이 3D", "category": "카툰", "description": "부드러운 3D 클레이 스타일"},
-    {"id": 3, "name": "메디컬 케어", "category": "비즈니스", "description": "의료/건강 전문 스타일"},
-    {"id": 4, "name": "사이언스 랩", "category": "학술", "description": "과학/연구 스타일"},
-    {"id": 5, "name": "학술 논문", "category": "학술", "description": "학술 발표 스타일"},
-    {"id": 6, "name": "인포그래픽", "category": "테크니컬", "description": "데이터 시각화 스타일"},
-    {"id": 7, "name": "코퍼레이트", "category": "비즈니스", "description": "비즈니스 프레젠테이션"},
-    {"id": 8, "name": "클린 모던", "category": "심플", "description": "현대적 깔끔한 스타일"},
-    {"id": 9, "name": "다크 모드", "category": "모던", "description": "어두운 배경 스타일"},
+DESIGN_PRESETS: List[Dict[str, Any]] = [
+    {"id": 1, "name": "미니멀 젠",   "category": "심플",       "description": "깔끔한 기본 스타일"},
+    {"id": 2, "name": "클레이 3D",   "category": "카툰",       "description": "부드러운 3D 클레이 스타일"},
+    {"id": 3, "name": "메디컬 케어", "category": "비즈니스",   "description": "의료/건강 전문 스타일"},
+    {"id": 4, "name": "사이언스 랩", "category": "학술",       "description": "과학/연구 스타일"},
+    {"id": 5, "name": "학술 논문",   "category": "학술",       "description": "학술 발표 스타일"},
+    {"id": 6, "name": "인포그래픽", "category": "테크니컬",   "description": "데이터 시각화 스타일"},
+    {"id": 7, "name": "코퍼레이트", "category": "비즈니스",   "description": "비즈니스 프레젠테이션"},
+    {"id": 8, "name": "클린 모던",  "category": "심플",       "description": "현대적 깔끔한 스타일"},
+    {"id": 9, "name": "다크 모드",  "category": "모던",       "description": "어두운 배경 스타일"},
 ]
 
-# 질병/의료 관련 추천 디자인
-MEDICAL_DESIGNS = ["메디컬 케어", "사이언스 랩", "학술 논문", "인포그래픽",
-                   "클린 모던", "미니멀 젠", "코퍼레이트"]
+MEDICAL_DESIGNS: List[str] = [
+    "메디컬 케어", "사이언스 랩", "학술 논문", "인포그래픽",
+    "클린 모던", "미니멀 젠", "코퍼레이트",
+]
+
+
+# ---------------------------------------------------------------------------
+# Design helpers
+# ---------------------------------------------------------------------------
 
 
 def print_design_menu() -> None:
-    """디자인 선택 메뉴 출력"""
+    """Print the interactive design selection menu to stdout."""
     print("\n" + "=" * 60)
-    print("  🎨 슬라이드 디자인 선택")
+    print("  슬라이드 디자인 선택")
     print("=" * 60)
     print()
     for preset in DESIGN_PRESETS:
@@ -60,24 +81,24 @@ def print_design_menu() -> None:
 
 
 def select_design(choice: Optional[int] = None) -> Dict[str, str]:
-    """
-    디자인 선택
+    """Return a design preset by number, prompting the user when *choice* is ``None``.
 
     Args:
-        choice: 1-9 프리셋 선택, 0이면 직접 입력, None이면 메뉴 표시
+        choice: Preset number 1–9, ``0`` for free-text entry, or ``None`` to
+            display the menu and read from stdin.
 
     Returns:
-        {"name": "디자인명", "category": "카테고리"}
+        Dictionary with ``"name"`` and ``"category"`` keys for the selected design.
     """
     if choice is None:
         print_design_menu()
         try:
-            choice = int(input("  디자인 번호 선택 (1-9, 기본=1): ").strip() or "1")
+            raw = input("  디자인 번호 선택 (1-9, 기본=1): ").strip() or "1"
+            choice = int(raw)
         except ValueError:
             choice = 1
 
     if choice == 0:
-        # 직접 입력
         from .prompts import SlidePrompts
         prompts = SlidePrompts()
 
@@ -87,44 +108,79 @@ def select_design(choice: Optional[int] = None) -> Dict[str, str]:
         if style_name in prompts:
             style = prompts.get_style(style_name)
             return {"name": style["name"], "category": style["category"]}
-        else:
-            print(f"'{style_name}' 스타일을 찾을 수 없습니다. 기본 스타일 사용.")
-            return {"name": "미니멀 젠", "category": "심플"}
 
-    elif 1 <= choice <= 9:
+        logger.warning("Style '%s' not found; using default", style_name)
+        return {"name": DEFAULT_DESIGN_NAME, "category": DEFAULT_DESIGN_CATEGORY}
+
+    if 1 <= choice <= 9:
         preset = DESIGN_PRESETS[choice - 1]
         return {"name": preset["name"], "category": preset["category"]}
 
-    else:
-        print("잘못된 선택. 기본 스타일 사용.")
-        return {"name": "미니멀 젠", "category": "심플"}
+    logger.warning("Invalid design choice %d; using default", choice)
+    return {"name": DEFAULT_DESIGN_NAME, "category": DEFAULT_DESIGN_CATEGORY}
 
 
 def get_design_prompt(design_name: str) -> str:
-    """디자인 이름으로 프롬프트 가져오기"""
+    """Return the slide prompt text for the named design.
+
+    Args:
+        design_name: Name of the design preset (e.g. ``"미니멀 젠"``).
+
+    Returns:
+        Prompt string, or an empty string when the design is not found.
+    """
     from .prompts import SlidePrompts
     prompts = SlidePrompts()
     return prompts.get_prompt(design_name) or ""
 
 
+# ---------------------------------------------------------------------------
+# Workflow class
+# ---------------------------------------------------------------------------
+
+
 class NoterangWorkflow:
-    """노트랑 기본 워크플로우 관리자"""
+    """Orchestrator for the standard Noterang browser-based workflow.
+
+    Steps executed by :meth:`run`:
+
+    1. Design selection
+    2. Browser launch and login
+    3. Notebook find-or-create
+    4. Slide generation request
+    5. Completion monitoring
+    6. PDF download
+    7. PPTX conversion
+
+    Attributes:
+        title: Notebook / slide deck title.
+        design_name: Selected design preset name.
+        slide_count: Target number of slides.
+        language: BCP-47 language code for slides.
+        download_dir: Directory for saving downloaded PDFs.
+        notebook_id: Resolved NotebookLM notebook ID (set during :meth:`run`).
+        pdf_path: Path to the downloaded PDF (set during :meth:`run`).
+        pptx_path: Path to the converted PPTX (set during :meth:`run`).
+    """
 
     def __init__(
         self,
         title: str,
         design: Optional[str] = None,
-        slide_count: int = 15,
-        language: str = "ko",
+        slide_count: int = DEFAULT_SLIDE_COUNT,
+        language: str = DEFAULT_LANGUAGE,
         download_dir: Optional[Path] = None,
-    ):
-        """
+    ) -> None:
+        """Initialise the workflow.
+
         Args:
-            title: 노트북/슬라이드 제목
-            design: 디자인 이름 (None이면 선택 메뉴 표시)
-            slide_count: 슬라이드 수 (기본 15)
-            language: 언어 (기본 한글)
-            download_dir: 다운로드 경로
+            title: Notebook / slide deck title.
+            design: Design preset name. When ``None``, the interactive selection
+                menu is shown during :meth:`run`.
+            slide_count: Number of slides to generate.
+            language: BCP-47 language code for slides (default ``"ko"``).
+            download_dir: Directory for saving downloaded PDFs.
+                Defaults to :data:`DOWNLOAD_DIR`.
         """
         self.title = title
         self.design_name = design
@@ -132,28 +188,28 @@ class NoterangWorkflow:
         self.language = language
         self.download_dir = download_dir or DOWNLOAD_DIR
 
-        # 결과
         self.notebook_id: Optional[str] = None
         self.pdf_path: Optional[Path] = None
         self.pptx_path: Optional[Path] = None
 
     async def run(self, headless: bool = False) -> Dict[str, Any]:
-        """
-        전체 워크플로우 실행
+        """Execute the full workflow.
+
+        Args:
+            headless: When ``True``, the browser runs without a visible window.
 
         Returns:
-            {
-                "success": bool,
-                "notebook_id": str,
-                "pdf_path": str,
-                "pptx_path": str,
-                "slide_count": int,
-                "design": str,
-                "error": str (실패 시)
-            }
+            Result dictionary with keys:
+                - ``"success"`` (bool)
+                - ``"notebook_id"`` (str)
+                - ``"pdf_path"`` (str)
+                - ``"pptx_path"`` (str or ``None``)
+                - ``"slide_count"`` (int)
+                - ``"design"`` (str)
+                - ``"error"`` (str, only on failure)
         """
         print("\n" + "=" * 60)
-        print(f"  🎯 노트랑 워크플로우 시작")
+        print("  노트랑 워크플로우 시작")
         print(f"  제목: {self.title}")
         print("=" * 60)
 
@@ -163,7 +219,7 @@ class NoterangWorkflow:
                 design = select_design()
                 self.design_name = design["name"]
 
-            print(f"\n✓ 디자인: {self.design_name}")
+            print(f"\n디자인: {self.design_name}")
 
             # 2. 브라우저 시작 및 로그인
             print("\n[1/5] 브라우저 시작 및 로그인...")
@@ -175,7 +231,7 @@ class NoterangWorkflow:
             if not await browser.ensure_logged_in():
                 return {"success": False, "error": "로그인 실패"}
 
-            print("  ✓ 로그인 완료")
+            print("  로그인 완료")
 
             # 3. 노트북 찾기 또는 생성
             print(f"\n[2/5] 노트북 '{self.title}' 찾기/생성...")
@@ -186,7 +242,7 @@ class NoterangWorkflow:
                 return {"success": False, "error": "노트북 생성 실패"}
 
             self.notebook_id = notebook.get("id")
-            print(f"  ✓ 노트북 ID: {self.notebook_id}")
+            print(f"  노트북 ID: {self.notebook_id}")
 
             # 4. 슬라이드 생성 요청
             print(f"\n[3/5] 슬라이드 생성 요청 ({self.slide_count}장, 한글)...")
@@ -202,20 +258,20 @@ class NoterangWorkflow:
                 await browser.close()
                 return {"success": False, "error": "슬라이드 생성 요청 실패"}
 
-            print("  ✓ 슬라이드 생성 요청 완료")
+            print("  슬라이드 생성 요청 완료")
 
             # 5. 생성 완료 모니터링
-            print(f"\n[4/5] 슬라이드 생성 모니터링...")
+            print("\n[4/5] 슬라이드 생성 모니터링...")
             completed = await self._monitor_slide_generation(browser)
 
             if not completed:
                 await browser.close()
                 return {"success": False, "error": "슬라이드 생성 타임아웃"}
 
-            print("  ✓ 슬라이드 생성 완료")
+            print("  슬라이드 생성 완료")
 
             # 6. PDF 다운로드
-            print(f"\n[5/5] PDF 다운로드...")
+            print("\n[5/5] PDF 다운로드...")
             self.download_dir.mkdir(parents=True, exist_ok=True)
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -229,20 +285,19 @@ class NoterangWorkflow:
                 await browser.close()
                 return {"success": False, "error": "PDF 다운로드 실패"}
 
-            print(f"  ✓ PDF 저장: {self.pdf_path}")
+            print(f"  PDF 저장: {self.pdf_path}")
 
             await browser.close()
 
             # 7. PPTX 변환
-            print(f"\n[변환] PDF → PPTX...")
+            print("\n[변환] PDF → PPTX...")
             self.pptx_path = await self._convert_to_pptx()
 
             if self.pptx_path:
-                print(f"  ✓ PPTX 저장: {self.pptx_path}")
+                print(f"  PPTX 저장: {self.pptx_path}")
 
-            # 완료
             print("\n" + "=" * 60)
-            print("  ✅ 워크플로우 완료!")
+            print("  워크플로우 완료!")
             print(f"  PDF:  {self.pdf_path}")
             print(f"  PPTX: {self.pptx_path}")
             print("=" * 60)
@@ -257,25 +312,24 @@ class NoterangWorkflow:
             }
 
         except Exception as e:
-            print(f"\n❌ 오류: {e}")
+            logger.error("Workflow failed: %s", e, exc_info=True)
             return {"success": False, "error": str(e)}
 
     async def _monitor_slide_generation(
         self,
-        browser,
-        timeout: int = 300,
-        interval: int = 10,
+        browser: Any,
+        timeout: int = DEFAULT_MONITOR_TIMEOUT,
+        interval: int = DEFAULT_MONITOR_INTERVAL,
     ) -> bool:
-        """
-        슬라이드 생성 완료 모니터링
+        """Poll until slide generation completes or *timeout* is reached.
 
         Args:
-            browser: NotebookLMBrowser 인스턴스
-            timeout: 최대 대기 시간 (초)
-            interval: 체크 간격 (초)
+            browser: :class:`~noterang.browser.NotebookLMBrowser` instance.
+            timeout: Maximum seconds to wait before returning ``False``.
+            interval: Seconds between each completion check.
 
         Returns:
-            생성 완료 여부
+            ``True`` when slides are ready, ``False`` on timeout.
         """
         start_time = time.time()
         check_count = 0
@@ -286,21 +340,24 @@ class NoterangWorkflow:
 
             print(f"  체크 #{check_count} ({elapsed}초 경과)...", end=" ")
 
-            # 슬라이드 생성 완료 확인
             is_ready = await browser.check_slides_ready()
 
             if is_ready:
-                print("✓ 완료!")
+                print("완료!")
                 return True
 
             print("생성 중...")
             await asyncio.sleep(interval)
 
-        print(f"  ⚠️ 타임아웃 ({timeout}초)")
+        logger.warning("Slide generation monitoring timed out after %d seconds", timeout)
         return False
 
     async def _convert_to_pptx(self) -> Optional[Path]:
-        """PDF를 PPTX로 변환"""
+        """Convert the downloaded PDF to PPTX format.
+
+        Returns:
+            Path to the converted PPTX file, or ``None`` when conversion fails.
+        """
         if not self.pdf_path or not self.pdf_path.exists():
             return None
 
@@ -313,27 +370,31 @@ class NoterangWorkflow:
             return pptx_path if success else None
 
         except Exception as e:
-            print(f"  PPTX 변환 실패: {e}")
+            logger.error("PPTX conversion failed: %s", e, exc_info=True)
             return None
+
+
+# ---------------------------------------------------------------------------
+# Convenience function
+# ---------------------------------------------------------------------------
 
 
 async def run_workflow(
     title: str,
     design: Optional[str] = None,
-    slide_count: int = 15,
+    slide_count: int = DEFAULT_SLIDE_COUNT,
     headless: bool = False,
 ) -> Dict[str, Any]:
-    """
-    노트랑 워크플로우 실행 (편의 함수)
+    """Execute the Noterang browser workflow (convenience wrapper).
 
     Args:
-        title: 노트북 제목
-        design: 디자인 이름 (None이면 선택 메뉴)
-        slide_count: 슬라이드 수
-        headless: 브라우저 숨김 여부
+        title: Notebook / slide deck title.
+        design: Design preset name. ``None`` shows the interactive menu.
+        slide_count: Number of slides to generate.
+        headless: Run the browser without a visible window.
 
     Returns:
-        워크플로우 결과
+        Workflow result dictionary (see :meth:`NoterangWorkflow.run`).
     """
     workflow = NoterangWorkflow(
         title=title,
@@ -343,14 +404,20 @@ async def run_workflow(
     return await workflow.run(headless=headless)
 
 
-# CLI 실행
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="노트랑 기본 워크플로우")
     parser.add_argument("--title", "-t", required=True, help="노트북/슬라이드 제목")
     parser.add_argument("--design", "-d", help="디자인 이름 (미입력시 선택 메뉴)")
-    parser.add_argument("--slides", "-s", type=int, default=15, help="슬라이드 수 (기본 15)")
+    parser.add_argument(
+        "--slides", "-s", type=int, default=DEFAULT_SLIDE_COUNT,
+        help=f"슬라이드 수 (기본 {DEFAULT_SLIDE_COUNT})"
+    )
     parser.add_argument("--headless", action="store_true", help="브라우저 숨김")
     parser.add_argument("--list-designs", action="store_true", help="디자인 목록 출력")
 

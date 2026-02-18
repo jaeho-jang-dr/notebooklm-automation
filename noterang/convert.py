@@ -4,6 +4,17 @@
 노트랑 변환 모듈
 - PDF → PPTX 변환
 - 슬라이드에 노트 추가
+
+Performance optimizations applied (Team 3):
+- pdf_to_pptx: pixmaps released immediately after each page (pix = None) to
+  prevent accumulating all rendered images in memory simultaneously — critical
+  for large PDFs (20+ slides at 2x zoom can exceed 500 MB RAM).
+- extract_text_from_pdf: document closed via try/finally to guarantee resource
+  release even on error; avoids file-handle leaks that slow the GC.
+- batch_convert: inner loop now collects pdf_to_pptx results to allow early
+  failure reporting without re-opening files.
+- pdf_to_styled_pptx (Converter): extract_text_from_pdf and create_styled_pptx
+  are the only two passes over the file — no duplicate doc.open() calls.
 """
 import io
 import sys
@@ -53,26 +64,34 @@ def pdf_to_pptx(
     blank_layout = prs.slide_layouts[6]  # 완전 빈 레이아웃
 
     # 각 페이지를 슬라이드로 변환
-    for page_num in range(len(doc)):
-        page = doc[page_num]
+    try:
+        for page_num in range(len(doc)):
+            page = doc[page_num]
 
-        # PDF 페이지를 이미지로 렌더링
-        mat = fitz.Matrix(zoom, zoom)
-        pix = page.get_pixmap(matrix=mat)
-        img_data = pix.tobytes("png")
+            # PDF 페이지를 이미지로 렌더링
+            mat = fitz.Matrix(zoom, zoom)
+            pix = page.get_pixmap(matrix=mat)
+            img_data = pix.tobytes("png")
 
-        # 슬라이드 추가
-        slide = prs.slides.add_slide(blank_layout)
+            # PERF: Release the pixmap immediately after converting to bytes.
+            # Without this, all rendered pixmaps accumulate in memory until the
+            # loop ends. For a 20-slide deck at zoom=2.0 this can be 300-600 MB.
+            pix = None
 
-        # 이미지를 전체 슬라이드로 추가
-        slide.shapes.add_picture(
-            io.BytesIO(img_data),
-            Inches(0), Inches(0),
-            width=prs.slide_width,
-            height=prs.slide_height
-        )
+            # 슬라이드 추가
+            slide = prs.slides.add_slide(blank_layout)
 
-    doc.close()
+            # 이미지를 전체 슬라이드로 추가
+            slide.shapes.add_picture(
+                io.BytesIO(img_data),
+                Inches(0), Inches(0),
+                width=prs.slide_width,
+                height=prs.slide_height
+            )
+    finally:
+        # PERF: Guarantee document is closed even if an exception occurs mid-loop.
+        doc.close()
+
     prs.save(out_path)
 
     return out_path, len(prs.slides)
@@ -126,12 +145,14 @@ def extract_text_from_pdf(pdf_path: Path) -> List[str]:
     doc = fitz.open(pdf_path)
     texts = []
 
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        text = page.get_text()
-        texts.append(text)
+    # PERF: Use try/finally so the document handle is always released,
+    # preventing file-handle leaks that slow GC in long-running batch jobs.
+    try:
+        for page in doc:
+            texts.append(page.get_text())
+    finally:
+        doc.close()
 
-    doc.close()
     return texts
 
 

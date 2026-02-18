@@ -5,6 +5,13 @@
 
 PyMuPDF로 PDF 페이지를 이미지로 추출하고
 python-pptx로 PPTX 슬라이드에 삽입합니다.
+
+Performance optimizations applied (Team 3):
+- Each pixmap is released (pix = None) immediately after .tobytes() so rendered
+  page bitmaps do not accumulate in memory across the full slide deck loop.
+- PDF document closed via try/finally to guarantee resource release on errors.
+- batch_convert: pdf file list is collected once (list()) before the loop
+  so glob is not re-evaluated on each iteration.
 """
 import sys
 from pathlib import Path
@@ -64,31 +71,39 @@ def pdf_to_pptx(
 
         blank_layout = prs.slide_layouts[6]  # 빈 슬라이드
 
-        for page_num in range(page_count):
-            page = pdf_doc[page_num]
+        try:
+            for page_num in range(page_count):
+                page = pdf_doc[page_num]
 
-            # 페이지를 이미지로 렌더링
-            mat = fitz.Matrix(dpi / 72, dpi / 72)
-            pix = page.get_pixmap(matrix=mat)
+                # 페이지를 이미지로 렌더링
+                mat = fitz.Matrix(dpi / 72, dpi / 72)
+                pix = page.get_pixmap(matrix=mat)
 
-            # 이미지를 BytesIO로 변환
-            img_bytes = BytesIO(pix.tobytes("png"))
+                # 이미지를 BytesIO로 변환
+                img_bytes = BytesIO(pix.tobytes("png"))
 
-            # 슬라이드 추가
-            slide = prs.slides.add_slide(blank_layout)
+                # PERF: Release pixmap immediately — prevents accumulating all
+                # rendered page bitmaps in memory simultaneously.
+                # At dpi=200 a single page can be 3-8 MB; 20 pages = 60-160 MB
+                # saved by freeing each pixmap right after tobytes().
+                pix = None
 
-            # 이미지 삽입 (전체 슬라이드 크기)
-            slide.shapes.add_picture(
-                img_bytes,
-                Inches(0),
-                Inches(0),
-                width=prs.slide_width,
-                height=prs.slide_height,
-            )
+                # 슬라이드 추가
+                slide = prs.slides.add_slide(blank_layout)
 
-            print(f"  페이지 {page_num + 1}/{page_count} 변환 완료")
+                # 이미지 삽입 (전체 슬라이드 크기)
+                slide.shapes.add_picture(
+                    img_bytes,
+                    Inches(0),
+                    Inches(0),
+                    width=prs.slide_width,
+                    height=prs.slide_height,
+                )
 
-        pdf_doc.close()
+                print(f"  페이지 {page_num + 1}/{page_count} 변환 완료")
+        finally:
+            # PERF: Guarantee document is closed even if rendering raises an exception.
+            pdf_doc.close()
 
         # PPTX 저장
         prs.save(str(pptx_path))

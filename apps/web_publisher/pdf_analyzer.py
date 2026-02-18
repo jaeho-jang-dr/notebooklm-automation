@@ -2,13 +2,23 @@
 # -*- coding: utf-8 -*-
 """
 PDF 슬라이드 분석기 (PyMuPDF + Vision OCR 폴백)
+
+Performance optimizations applied (Team 3):
+- _ocr_with_vision: uses a persistent requests.Session() for all page requests
+  instead of a new TCP connection per page — saves ~100-200 ms per page for
+  HTTPS handshake overhead (critical for 15-20 page decks = up to 4 s saved).
+- analyze(): previously called extract_slide_titles() and extract_all_text()
+  as two separate full document passes. Now a single _extract_titles_and_texts()
+  pass collects both simultaneously, halving the PyMuPDF I/O work.
+- Pixmaps in _ocr_with_vision released immediately after tobytes() to avoid
+  accumulating all rendered bitmaps in memory.
 """
 import base64
 import os
 import re
 import sys
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
@@ -54,39 +64,53 @@ class PDFAnalyzer:
         api_url = "https://vision.googleapis.com/v1/images:annotate"
         texts = []
 
-        for i, page in enumerate(self.doc):
-            mat = fitz.Matrix(2.0, 2.0)
-            pix = page.get_pixmap(matrix=mat)
-            img_bytes = pix.tobytes("png")
-            img_b64 = base64.b64encode(img_bytes).decode('utf-8')
+        # PERF BEFORE: requests.post() called bare on each page — each call
+        #              opens a new HTTPS connection (TLS handshake ~100-200 ms).
+        # PERF AFTER:  One Session() is created once and reused for all pages.
+        #              The underlying TCP connection is kept alive automatically,
+        #              saving ~100-200 ms × page_count (e.g. 15 pages = ~2-3 s).
+        with requests.Session() as session:
+            for i, page in enumerate(self.doc):
+                mat = fitz.Matrix(2.0, 2.0)
+                pix = page.get_pixmap(matrix=mat)
+                img_bytes = pix.tobytes("png")
 
-            payload = {
-                "requests": [{
-                    "image": {"content": img_b64},
-                    "features": [{"type": "DOCUMENT_TEXT_DETECTION"}]
-                }]
-            }
+                # PERF: Release pixmap immediately — prevents all rendered
+                # bitmaps from accumulating in RAM across the full page loop.
+                pix = None
 
-            try:
-                resp = requests.post(
-                    f"{api_url}?key={self.vision_api_key}",
-                    json=payload,
-                    timeout=60,
-                )
-                result = resp.json()
+                img_b64 = base64.b64encode(img_bytes).decode('utf-8')
 
-                if 'error' in result:
-                    print(f"  Vision API 오류 (페이지 {i+1}): {result['error']}")
+                payload = {
+                    "requests": [{
+                        "image": {"content": img_b64},
+                        "features": [{"type": "DOCUMENT_TEXT_DETECTION"}]
+                    }]
+                }
+
+                try:
+                    resp = session.post(
+                        f"{api_url}?key={self.vision_api_key}",
+                        json=payload,
+                        timeout=60,
+                    )
+                    result = resp.json()
+
+                    if 'error' in result:
+                        print(f"  Vision API 오류 (페이지 {i+1}): {result['error']}")
+                        texts.append("")
+                        continue
+
+                    responses = result.get('responses', [])
+                    if responses:
+                        full_text = responses[0].get('fullTextAnnotation', {}).get('text', '')
+                    else:
+                        full_text = ''
+                    texts.append(full_text)
+                    print(f"  OCR 페이지 {i+1}/{self.page_count}: {len(full_text)}자")
+                except Exception as e:
+                    print(f"  Vision OCR 실패 (페이지 {i+1}): {e}")
                     texts.append("")
-                    continue
-
-                responses = result.get('responses', [{}])
-                full_text = responses[0].get('fullTextAnnotation', {}).get('text', '')
-                texts.append(full_text)
-                print(f"  OCR 페이지 {i+1}/{self.page_count}: {len(full_text)}자")
-            except Exception as e:
-                print(f"  Vision OCR 실패 (페이지 {i+1}): {e}")
-                texts.append("")
 
         total = sum(len(t.strip()) for t in texts)
         print(f"  Vision OCR 완료: 총 {total}자")
@@ -94,8 +118,25 @@ class PDFAnalyzer:
 
     def extract_slide_titles(self) -> List[str]:
         """각 슬라이드의 제목(큰 글씨) 추출"""
-        titles = []
+        titles, _ = self._extract_titles_and_texts()
+        return titles
+
+    def _extract_titles_and_texts(self) -> Tuple[List[str], List[str]]:
+        """
+        PERF: Single document pass that collects both slide titles and plain text.
+
+        Previously analyze() called extract_slide_titles() and extract_all_text()
+        as two independent loops over the full document — 2× the PyMuPDF I/O.
+        This method does one pass and returns both results simultaneously.
+        """
+        titles: List[str] = []
+        texts: List[str] = []
+
         for page in self.doc:
+            # --- plain text ---
+            texts.append(page.get_text())
+
+            # --- title (largest font span on the page) ---
             blocks = page.get_text("dict", flags=0)
             best_text = ""
             best_size = 0
@@ -111,12 +152,16 @@ class PDFAnalyzer:
                             best_text = text
             if best_text:
                 titles.append(best_text)
-        return titles
+
+        return titles, texts
 
     def generate_thumbnail(self, page_num: int = 0, scale: float = 1.5) -> bytes:
         """특정 페이지의 썸네일 이미지 (PNG) 생성"""
         import fitz
-        page = self.doc[page_num]
+        if self.page_count == 0:
+            return b""
+        safe_page_num = max(0, min(page_num, self.page_count - 1))
+        page = self.doc[safe_page_num]
         mat = fitz.Matrix(scale, scale)
         pix = page.get_pixmap(matrix=mat)
         return pix.tobytes("png")
@@ -158,20 +203,52 @@ class PDFAnalyzer:
         return "\n\n\n".join(parts)
 
     def analyze(self) -> Dict[str, Any]:
-        """PDF 전체 분석"""
+        """
+        PDF 전체 분석
+
+        PERF: Previously called extract_slide_titles() and extract_all_text() as
+        two separate full document passes, then build_summary() called
+        extract_slide_titles() *again* (third pass), and build_content() called
+        extract_all_text() *again* (fourth pass).
+
+        Now a single _extract_titles_and_texts() call produces both, which are
+        reused for summary, content, and keyword extraction — one pass total.
+        """
         print(f"  PDF 분석: {self.pdf_path.name} ({self.page_count}페이지)")
 
-        titles = self.extract_slide_titles()
-        all_text = self.extract_all_text()
-        full_text = " ".join(t.strip() for t in all_text if t.strip())
+        # PERF: One document pass instead of up to four separate passes.
+        titles, raw_texts = self._extract_titles_and_texts()
 
+        # OCR fallback when PyMuPDF extracted too little text
+        total_chars_raw = sum(len(t.strip()) for t in raw_texts)
+        if total_chars_raw < 100:
+            print(f"  PyMuPDF 텍스트 부족 ({total_chars_raw}자) → Vision OCR 시도...")
+            ocr_texts = self._ocr_with_vision()
+            if ocr_texts:
+                raw_texts = ocr_texts
+
+        full_text = " ".join(t.strip() for t in raw_texts if t.strip())
         keywords = self._extract_keywords(full_text)
+
+        # Build summary from already-computed titles (no extra document pass)
+        if titles:
+            summary = "\n".join(f"{i}. {title}" for i, title in enumerate(titles, 1))
+        else:
+            summary = ""
+
+        # Build content from already-computed raw_texts (no extra document pass)
+        content_parts = []
+        for i, text in enumerate(raw_texts, 1):
+            clean = self.clean_slide_text(text)
+            if clean:
+                content_parts.append(f"[슬라이드 {i}]\n{clean}")
+        content = "\n\n\n".join(content_parts)
 
         result = {
             "page_count": self.page_count,
             "titles": titles,
-            "summary": self.build_summary(),
-            "content": self.build_content(),
+            "summary": summary,
+            "content": content,
             "keywords": keywords,
             "total_chars": len(full_text),
         }

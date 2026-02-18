@@ -3,6 +3,7 @@
 """
 WebPublishPipeline - NotebookLM → PDF 분석 → 자료실 등록
 """
+import logging
 import sys
 import time
 from pathlib import Path
@@ -10,6 +11,8 @@ from typing import Optional, List, Dict, Any
 
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
+
+logger = logging.getLogger(__name__)
 
 # noterang 패키지 경로 추가
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -119,9 +122,34 @@ class WebPublishPipeline:
             skip_convert=True,
         )
 
+    def _validate_pdf_path(self, pdf_path: Path) -> Optional[str]:
+        """
+        PDF 파일 경로 유효성 검사.
+
+        Returns:
+            오류 메시지 문자열, 또는 유효하면 None.
+        """
+        if not pdf_path.exists():
+            return f"PDF 파일을 찾을 수 없습니다: {pdf_path}"
+        if not pdf_path.is_file():
+            return f"PDF 경로가 파일이 아닙니다: {pdf_path}"
+        if pdf_path.suffix.lower() != '.pdf':
+            return f"PDF 확장자가 아닙니다: {pdf_path.suffix}"
+        try:
+            size = pdf_path.stat().st_size
+        except OSError as e:
+            return f"PDF 파일 정보를 읽을 수 없습니다: {e}"
+        if size == 0:
+            return f"PDF 파일이 비어 있습니다 (0 bytes): {pdf_path}"
+        return None
+
     async def run(self) -> Dict[str, Any]:
         """전체 파이프라인 실행"""
         start_time = time.time()
+
+        # 입력 검증
+        if not self.title or not self.title.strip():
+            return {"success": False, "error": "제목이 비어 있습니다"}
 
         print("\n" + "=" * 60)
         print(f"  웹 자료실 퍼블리셔")
@@ -138,37 +166,85 @@ class WebPublishPipeline:
         # Step 1: NotebookLM으로 PDF 생성 (기존 PDF가 없을 때만)
         if not pdf_path:
             print("\n[1/4] NotebookLM 슬라이드 생성...")
-            result = await self.run_noterang()
+            try:
+                result = await self.run_noterang()
+            except Exception as e:
+                elapsed = int(time.time() - start_time)
+                error_msg = f"NotebookLM 자동화 예외: {e}"
+                print(f"\n  파이프라인 실패: {error_msg} ({elapsed}초)")
+                logger.error("run_noterang raised an exception", exc_info=True)
+                return {"success": False, "error": error_msg, "duration": elapsed}
 
             if not result.success or not result.pdf_path:
                 elapsed = int(time.time() - start_time)
-                print(f"\n  파이프라인 실패: {result.error} ({elapsed}초)")
-                return {"success": False, "error": result.error}
+                error_msg = result.error or "PDF 생성 실패 (이유 불명)"
+                print(f"\n  파이프라인 실패: {error_msg} ({elapsed}초)")
+                return {"success": False, "error": error_msg, "duration": elapsed}
 
             pdf_path = Path(result.pdf_path)
             notebook_id = result.notebook_id
             print(f"  PDF 생성 완료: {pdf_path}")
         else:
             print("\n[1/4] 기존 PDF 사용")
-            if not pdf_path.exists():
-                return {"success": False, "error": f"PDF 파일 없음: {pdf_path}"}
+            path_error = self._validate_pdf_path(pdf_path)
+            if path_error:
+                return {"success": False, "error": path_error}
 
         # Step 2: PDF 분석
         print("\n[2/4] PDF 슬라이드 분석...")
-        analyzer = PDFAnalyzer(pdf_path, self.publisher_config.vision_api_key)
+        analyzer = None
         try:
-            analysis = analyzer.analyze()
-            thumbnail = analyzer.generate_thumbnail(0)
-            analysis["thumbnail"] = thumbnail
+            analyzer = PDFAnalyzer(pdf_path, self.publisher_config.vision_api_key)
+            try:
+                analysis = analyzer.analyze()
+            except Exception as e:
+                elapsed = int(time.time() - start_time)
+                error_msg = f"PDF 분석 실패: {e}"
+                print(f"  ❌ {error_msg}")
+                logger.error(f"PDFAnalyzer.analyze failed: {pdf_path}", exc_info=True)
+                return {"success": False, "error": error_msg, "duration": elapsed}
+
+            try:
+                thumbnail = analyzer.generate_thumbnail(0) if getattr(analyzer, 'page_count', 0) > 0 else None
+                analysis["thumbnail"] = thumbnail if thumbnail else None
+            except Exception as e:
+                # 썸네일 실패는 치명적이지 않음 — 경고 후 계속
+                print(f"  ⚠️ 썸네일 생성 실패 (건너뜀): {e}")
+                logger.warning(f"Thumbnail generation failed: {e}")
+                analysis["thumbnail"] = None
+
         finally:
-            analyzer.close()
+            if analyzer is not None:
+                try:
+                    analyzer.close()
+                except Exception as e:
+                    logger.warning(f"PDFAnalyzer.close() error (ignored): {e}")
 
         # Step 3: 파일 복사
         print("\n[3/4] 웹앱에 파일 복사...")
-        file_mgr = FileManager(self.publisher_config.uploads_dir)
-        pdf_url, thumb_url = file_mgr.copy_pdf_and_thumbnail(
-            pdf_path, self.title, analysis.get("thumbnail")
-        )
+        try:
+            file_mgr = FileManager(self.publisher_config.uploads_dir)
+            pdf_url, thumb_url = file_mgr.copy_pdf_and_thumbnail(
+                pdf_path, self.title, analysis.get("thumbnail")
+            )
+        except PermissionError as e:
+            elapsed = int(time.time() - start_time)
+            error_msg = f"파일 복사 권한 없음: {e}"
+            print(f"  ❌ {error_msg}")
+            logger.error("File copy PermissionError", exc_info=True)
+            return {"success": False, "error": error_msg, "duration": elapsed}
+        except OSError as e:
+            elapsed = int(time.time() - start_time)
+            error_msg = f"파일 복사 실패 (디스크 공간 또는 경로 오류): {e}"
+            print(f"  ❌ {error_msg}")
+            logger.error("File copy OSError", exc_info=True)
+            return {"success": False, "error": error_msg, "duration": elapsed}
+        except Exception as e:
+            elapsed = int(time.time() - start_time)
+            error_msg = f"파일 복사 중 예외: {e}"
+            print(f"  ❌ {error_msg}")
+            logger.error("File copy unexpected error", exc_info=True)
+            return {"success": False, "error": error_msg, "duration": elapsed}
 
         # Step 4: 자료실 등록
         doc_id = None
@@ -176,15 +252,25 @@ class WebPublishPipeline:
             print("\n[4/4] 자료실 등록...")
             tags = self.generate_tags(analysis.get("keywords", []))
             client = FirestoreClient(self.publisher_config.firebase_project_id)
-            doc_id = client.register_article(
-                title=self.title,
-                pdf_url=pdf_url,
-                thumb_url=thumb_url,
-                analysis=analysis,
-                tags=tags,
-                article_type=self.article_type,
-                visible=self.visible,
-            )
+            try:
+                doc_id = client.register_article(
+                    title=self.title,
+                    pdf_url=pdf_url,
+                    thumb_url=thumb_url,
+                    analysis=analysis,
+                    tags=tags,
+                    article_type=self.article_type,
+                    visible=self.visible,
+                )
+            except Exception as e:
+                # Firestore 등록 실패는 파이프라인 전체를 실패로 보지 않음 —
+                # PDF 파일은 이미 복사됐으므로 경고 후 계속
+                print(f"  ⚠️ 자료실 등록 실패 (파일은 복사됨): {e}")
+                logger.error("Firestore register_article raised an exception", exc_info=True)
+                doc_id = None
+
+            if doc_id is None:
+                print("  ⚠️ 자료실 등록 실패. PDF는 웹앱에 복사되었습니다.")
         else:
             print("\n[4/4] 자료실 등록 건너뜀 (--no-register)")
 
@@ -196,7 +282,7 @@ class WebPublishPipeline:
         print("=" * 60)
         print(f"  제목: {self.title}")
         print(f"  PDF: {pdf_path}")
-        print(f"  슬라이드: {analysis['page_count']}장")
+        print(f"  슬라이드: {analysis.get('page_count', '?')}장")
         print(f"  URL: {pdf_url}")
         if thumb_url:
             print(f"  썸네일: {thumb_url}")
@@ -213,6 +299,6 @@ class WebPublishPipeline:
             "pdf_url": pdf_url,
             "thumb_url": thumb_url,
             "doc_id": doc_id,
-            "page_count": analysis["page_count"],
+            "page_count": analysis.get("page_count", 0),
             "duration": elapsed,
         }

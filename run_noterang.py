@@ -18,6 +18,7 @@ Usage:
     python -m noterang run "제목" --queries "쿼리1,쿼리2"
 """
 import asyncio
+import logging
 import sys
 
 if sys.platform == 'win32':
@@ -25,12 +26,24 @@ if sys.platform == 'win32':
 
 from noterang import Noterang
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    datefmt='%H:%M:%S',
+)
+logger = logging.getLogger(__name__)
+
 
 async def main():
     """메인 실행"""
 
     # 노트랑 인스턴스 생성
-    noterang = Noterang()
+    try:
+        noterang = Noterang()
+    except Exception as e:
+        print(f"❌ 노트랑 초기화 실패: {e}")
+        logger.error("Noterang initialization failed", exc_info=True)
+        return None
 
     # ========================================
     # 방법 1: CLI 기반 자동화 (nlm 도구 사용)
@@ -50,16 +63,24 @@ async def main():
     # 방법 2: 브라우저 기반 자동화 (Playwright 직접 제어)
     # nlm CLI 버그 시 사용
     # ========================================
-    result = await noterang.run_browser(
-        title="테스트 노트북",
-        sources=[
-            # URL 소스 목록 (선택 사항)
-            # "https://example.com/article1",
-            # "https://example.com/article2",
-        ],
-        focus=None,
-        language="ko"  # 반드시 한글!
-    )
+    try:
+        result = await noterang.run_browser(
+            title="테스트 노트북",
+            sources=[
+                # URL 소스 목록 (선택 사항)
+                # "https://example.com/article1",
+                # "https://example.com/article2",
+            ],
+            focus=None,
+            language="ko"  # 반드시 한글!
+        )
+    except KeyboardInterrupt:
+        print("\n⚠️ 사용자에 의해 중단되었습니다.")
+        return None
+    except Exception as e:
+        print(f"\n❌ 예기치 않은 오류: {e}")
+        logger.error("run_browser raised an unexpected exception", exc_info=True)
+        return None
 
     # 결과 출력
     if result.success:

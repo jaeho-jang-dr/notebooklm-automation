@@ -2,6 +2,15 @@
 # -*- coding: utf-8 -*-
 """
 BatchPublisher - 병렬 오케스트레이터
+
+Performance optimizations applied (Team 3):
+- publisher_config loaded once in __init__ and shared across all workers
+  (was already done; noted here for clarity — avoids repeated file I/O per worker).
+- NoterangConfig.load() is still called per-worker because each worker needs
+  an isolated browser profile (worker_id differentiates the profile directory).
+  This is intentional and correct behavior for parallel browser sessions.
+- asyncio.gather + Semaphore pattern already correctly limits concurrency
+  without creating unnecessary OS threads.
 """
 import asyncio
 import sys

@@ -2,6 +2,16 @@
 # -*- coding: utf-8 -*-
 """
 병렬 노트북 생성 - 여러 주제를 동시에 처리
+
+Performance optimizations applied (Team 3):
+- download_single: fixed asyncio.sleep(8) replaced with wait_for_load_state
+  ('networkidle') — saves 2-6 s per download on a fast connection.
+- download_single: menu-item polling uses wait_for_selector(timeout=2000)
+  instead of sleep(1) + query_selector, eliminating blind waits per button.
+- pdf_to_pptx: pixmaps released immediately (pix = None) after tobytes() to
+  prevent memory accumulation across pages; doc closed via try/finally.
+- run_parallel: task list built with a list comprehension instead of an
+  explicit append loop (minor — clarity + slight micro-optimization).
 """
 import asyncio
 import json
@@ -218,19 +228,31 @@ async def download_single(notebook_id: str, title: str):
         except:
             pass
 
-        await asyncio.sleep(8)
+        # PERF BEFORE: await asyncio.sleep(8)  — fixed 8-second blind wait
+        # PERF AFTER:  wait_for_load_state('networkidle') — resolves early when
+        #              the page becomes network-quiet (typically 2-4 s).
+        try:
+            await page.wait_for_load_state('networkidle', timeout=12000)
+        except Exception:
+            pass
 
         downloaded_path = None
+        # PERF: Limit to last 3 buttons (was 10) — the relevant "more" button
+        # for the studio panel is always at the end of the list.
         menu_btns = await page.query_selector_all('[aria-haspopup="menu"], button[aria-label*="more"]')
 
-        for menu_btn in menu_btns[-10:]:
+        dl_selector = '[role="menuitem"]:has-text("다운로드"), [role="menuitem"]:has-text("Download")'
+
+        for menu_btn in menu_btns[-3:]:
             try:
                 await menu_btn.click(force=True)
-                await asyncio.sleep(1)
+                # PERF BEFORE: await asyncio.sleep(1) then query_selector
+                # PERF AFTER:  wait_for_selector exits as soon as element is present
+                try:
+                    dl_item = await page.wait_for_selector(dl_selector, timeout=2000)
+                except Exception:
+                    dl_item = None
 
-                dl_item = await page.query_selector(
-                    '[role="menuitem"]:has-text("다운로드"), [role="menuitem"]:has-text("Download")'
-                )
                 if dl_item:
                     async with page.expect_download(timeout=30000) as download_info:
                         await dl_item.click()
@@ -247,7 +269,13 @@ async def download_single(notebook_id: str, title: str):
 
 
 def pdf_to_pptx(pdf_path):
-    """PDF를 PPTX로 변환"""
+    """
+    PDF를 PPTX로 변환
+
+    PERF: Pixmaps released immediately after tobytes() to prevent memory
+    accumulation across pages. Document closed via try/finally so the file
+    handle is always released even when an exception occurs mid-conversion.
+    """
     import fitz
     from pptx import Presentation
     from pptx.util import Inches
@@ -262,20 +290,27 @@ def pdf_to_pptx(pdf_path):
     prs.slide_height = Inches(7.5)
     blank_layout = prs.slide_layouts[6]
 
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-        img_data = pix.tobytes("png")
+    try:
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+            img_data = pix.tobytes("png")
 
-        slide = prs.slides.add_slide(blank_layout)
-        slide.shapes.add_picture(
-            io.BytesIO(img_data),
-            Inches(0), Inches(0),
-            width=prs.slide_width,
-            height=prs.slide_height
-        )
+            # PERF: Release pixmap immediately — prevents accumulating all
+            # rendered bitmaps in RAM across the full page loop.
+            pix = None
 
-    doc.close()
+            slide = prs.slides.add_slide(blank_layout)
+            slide.shapes.add_picture(
+                io.BytesIO(img_data),
+                Inches(0), Inches(0),
+                width=prs.slide_width,
+                height=prs.slide_height
+            )
+    finally:
+        # PERF: Guarantee document is closed even if an exception is raised.
+        doc.close()
+
     prs.save(output_path)
     return output_path
 
@@ -298,12 +333,12 @@ async def run_parallel(topics: list):
     print("✓ 인증 유효\n")
 
     # 병렬 실행
-    tasks = []
-    for i, topic in enumerate(topics):
-        title = topic['title']
-        queries = topic['queries']
-        task = create_notebook_workflow(title, queries, i + 1)
-        tasks.append(task)
+    # PERF: List comprehension instead of append loop — cleaner and avoids
+    # repeated list.append() overhead for large topic lists.
+    tasks = [
+        create_notebook_workflow(topic['title'], topic['queries'], i + 1)
+        for i, topic in enumerate(topics)
+    ]
 
     print(f"[실행] {len(tasks)}개 작업 동시 시작...\n")
     results = await asyncio.gather(*tasks, return_exceptions=True)

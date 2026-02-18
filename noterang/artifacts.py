@@ -6,9 +6,12 @@
 - 스튜디오 상태 확인: Python API (병렬 안전)
 """
 import asyncio
+import logging
 import sys
 import time
 from typing import Optional, Dict, Tuple
+
+logger = logging.getLogger(__name__)
 
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
@@ -16,6 +19,22 @@ if sys.platform == 'win32':
 from .config import get_config
 from .nlm_client import get_nlm_client
 from .auth import run_nlm
+
+
+async def retry_async(coro_func, max_attempts: int = 3, delay: float = 2.0, backoff: float = 2.0, exceptions=(Exception,)):
+    """Retry an async function with exponential backoff."""
+    for attempt in range(max_attempts):
+        try:
+            return await coro_func()
+        except exceptions as e:
+            if attempt == max_attempts - 1:
+                raise
+            wait = delay * (backoff ** attempt)
+            logger.warning(
+                f"Attempt {attempt + 1}/{max_attempts} failed: {e}. "
+                f"Retrying in {wait:.1f}s..."
+            )
+            await asyncio.sleep(wait)
 
 
 def create_slides(
@@ -119,6 +138,10 @@ def check_studio_status(notebook_id: str) -> Tuple[str, Dict]:
         (status, full_response)
         status: "completed", "in_progress", "failed", "unknown"
     """
+    if not notebook_id:
+        logger.warning("check_studio_status called with empty notebook_id")
+        return "unknown", {"error": "notebook_id가 비어 있습니다"}
+
     # Python API 시도
     try:
         client = get_nlm_client()
@@ -133,18 +156,19 @@ def check_studio_status(notebook_id: str) -> Tuple[str, Dict]:
             return status, latest
 
         return "unknown", {"raw": str(artifacts)}
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Python API studio status failed (falling back to CLI): %s", e)
 
     # CLI fallback (인코딩 에러 등 Python API 실패 시)
     try:
         success, stdout, stderr = run_nlm(["studio", "status", notebook_id])
         if not success:
-            return "unknown", {"error": stderr}
+            logger.warning(f"nlm studio status failed: {stderr[:200]}")
+            return "unknown", {"error": stderr[:500]}
 
-        import json
+        import json as _json
         try:
-            data = json.loads(stdout)
+            data = _json.loads(stdout)
             if isinstance(data, list):
                 if len(data) == 0:
                     return "in_progress", {"raw": stdout}
@@ -153,10 +177,10 @@ def check_studio_status(notebook_id: str) -> Tuple[str, Dict]:
                     return status, data[0]
             elif isinstance(data, dict):
                 return data.get("status", "unknown"), data
-        except json.JSONDecodeError:
-            pass
+        except _json.JSONDecodeError as e:
+            logger.debug(f"check_studio_status: JSON parse failed: {e}")
 
-        # 텍스트 파싱
+        # 텍스트 파싱 폴백
         lower = stdout.lower()
         if "completed" in lower:
             return "completed", {"raw": stdout}
@@ -165,8 +189,13 @@ def check_studio_status(notebook_id: str) -> Tuple[str, Dict]:
         elif "failed" in lower:
             return "failed", {"raw": stdout}
 
-        return "unknown", {"raw": stdout}
+        return "unknown", {"raw": stdout[:500]}
+
+    except OSError as e:
+        logger.error(f"check_studio_status: OS error running nlm: {e}")
+        return "unknown", {"error": f"OS 오류: {e}"}
     except Exception as e:
+        logger.error(f"check_studio_status: unexpected error: {e}", exc_info=True)
         return "unknown", {"error": str(e)}
 
 

@@ -7,10 +7,13 @@
 - 메뉴 순회 제한 + 명시적 타임아웃으로 프리즈 방지
 """
 import asyncio
+import logging
 import sys
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
@@ -81,8 +84,13 @@ async def _download_via_browser_impl(
         except Exception as e:
             print(f"  페이지 로드 중... ({e})")
 
-        # 페이지 로드 대기
-        await asyncio.sleep(8)
+        # PERF BEFORE: await asyncio.sleep(8)  — fixed 8-second blind wait
+        # PERF AFTER:  wait_for_load_state('networkidle') — resolves as soon as
+        #              network is quiet (typically 2-4 s on a stable connection).
+        try:
+            await page.wait_for_load_state('networkidle', timeout=12000)
+        except Exception:
+            pass  # 타임아웃시 계속 진행
 
         # 방법 1: 좌표 기반 클릭 (더 빠르고 안정적)
         downloaded_path = await _try_coordinate_download(page, output_path, artifact_type)
@@ -95,7 +103,8 @@ async def _download_via_browser_impl(
         if not downloaded_path:
             downloaded_path = await _wait_for_new_file(output_path, timeout=30)
 
-        await asyncio.sleep(2)
+        # PERF: Reduced from sleep(2) → sleep(0.5); files are already saved at this point.
+        await asyncio.sleep(0.5)
         await context.close()
 
     return downloaded_path
@@ -124,7 +133,8 @@ async def _try_menu_download(page, output_path: Path, artifact_type: str) -> Opt
                 except Exception:
                     pass
                 continue
-            except Exception:
+            except Exception as e:
+                logger.debug("Menu button attempt failed: %s", e)
                 try:
                     await page.keyboard.press('Escape')
                 except Exception:
@@ -140,14 +150,20 @@ async def _try_menu_download(page, output_path: Path, artifact_type: str) -> Opt
 async def _try_single_menu_btn(page, menu_btn, output_path: Path, artifact_type: str) -> Optional[Path]:
     """단일 메뉴 버튼 클릭 → 다운로드 시도"""
     await menu_btn.click(force=True)
-    await asyncio.sleep(1)
 
-    # 다운로드 메뉴 아이템 찾기 (한글/영어)
-    dl_item = await page.query_selector(
+    # PERF BEFORE: await asyncio.sleep(1) then query_selector — always waits 1 s
+    #              regardless of how quickly the menu appears.
+    # PERF AFTER:  wait_for_selector with a 2-second timeout — resolves immediately
+    #              when the menu item is ready, or gives up quickly if not present.
+    dl_selector = (
         '[role="menuitem"]:has-text("다운로드"), '
         '[role="menuitem"]:has-text("Download"), '
         '[role="menuitem"]:has-text("download")'
     )
+    try:
+        dl_item = await page.wait_for_selector(dl_selector, timeout=2000)
+    except Exception:
+        dl_item = None
 
     if dl_item:
         # 다운로드 이벤트 대기
@@ -181,15 +197,21 @@ async def _try_coordinate_download(page, output_path: Path, artifact_type: str) 
         (int(1800 * ratio_x), int(350 * ratio_y)),  # 대체 위치
     ]
 
+    dl_selector = (
+        '[role="menuitem"]:has-text("다운로드"), '
+        '[role="menuitem"]:has-text("Download")'
+    )
+
     for x, y in coordinates:
         try:
             await page.mouse.click(x, y)
-            await asyncio.sleep(1)
-
-            dl_item = await page.query_selector(
-                '[role="menuitem"]:has-text("다운로드"), '
-                '[role="menuitem"]:has-text("Download")'
-            )
+            # PERF BEFORE: await asyncio.sleep(1) then query_selector
+            # PERF AFTER:  wait_for_selector(timeout=2000) — exits as soon as
+            #              the menu item appears in the DOM, up to 2 s max.
+            try:
+                dl_item = await page.wait_for_selector(dl_selector, timeout=2000)
+            except Exception:
+                dl_item = None
 
             if dl_item:
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -206,7 +228,8 @@ async def _try_coordinate_download(page, output_path: Path, artifact_type: str) 
 
             await page.keyboard.press('Escape')
 
-        except Exception:
+        except Exception as e:
+            logger.debug("Coordinate download attempt failed: %s", e)
             try:
                 await page.keyboard.press('Escape')
             except Exception:
@@ -302,7 +325,12 @@ async def take_screenshot(notebook_id: str, output_path: Path = None) -> Optiona
 
         try:
             await page.goto(notebook_url, wait_until='domcontentloaded', timeout=30000)
-            await asyncio.sleep(5)
+            # PERF BEFORE: await asyncio.sleep(5)
+            # PERF AFTER:  wait_for_load_state('networkidle') — resolves early on fast connections
+            try:
+                await page.wait_for_load_state('networkidle', timeout=8000)
+            except Exception:
+                pass
             await page.screenshot(path=str(screenshot_path))
             print(f"  스크린샷 저장: {screenshot_path}")
         except Exception as e:
